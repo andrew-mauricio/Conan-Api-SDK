@@ -21,3 +21,59 @@ funciona com a Conan-Api instalada no servidor.
 
 Para INSTALAR o que voce compilou, e para rodar um servidor, baixe o pacote do
 servidor: e' outro download, com o carregador e os plugins prontos.
+
+
+==============================================================================================================================================================================================
+
+
+Conan-Api — Plugin Development SDK
+======================================
+
+You need ONE header and a C++ compiler. Nothing to link.
+
+include/Conan/ConanPluginApi.h    the API table — that's all
+include/Conan/ConanPermission.h   check permissions/VIP (optional)
+Exemplos/                         six source examples to copy from
+Docs/PARA-DESENVOLVEDORES.md      the guide
+Docs/EVENTOS.md                   which game events exist
+
+START LIKE THIS:
+
+cp -r Exemplos/ExemploOla MeuPlugin
+cd MeuPlugin && ./compilar.sh
+
+Your plugin RECEIVES the API in a function table and calls everything via api->. Not 
+a single line of the engine is included in your binary — which is why any compiler works 
+(any version of Visual Studio, MinGW, Clang) and why your plugin only runs with Conan-Api 
+installed on the server.
+
+To INSTALL what you compiled and to run a server, download the server package: 
+that is a separate download containing the loader and pre-built plugins.
+
+
+==============================================================================================================================================================================================
+
+
+Conan-Api — SDK para escribir plugins
+======================================
+
+Necesitas UN header y un compilador de C++. Nada que enlazar.
+
+include/Conan/ConanPluginApi.h    la tabla de la API — es solo esto
+include/Conan/ConanPermission.h   consultar permisos/VIP (opcional)
+Exemplos/                         seis ejemplos con código fuente, para copiar
+Docs/PARA-DESENVOLVEDORES.md      la guía
+Docs/EVENTOS.md                   qué eventos del juego existen
+
+EMPIEZA ASÍ:
+
+cp -r Exemplos/ExemploOla MeuPlugin
+cd MeuPlugin && ./compilar.sh
+
+Tu plugin RECIBE la API en una tabla de funciones y llama a todo mediante api->. 
+Ninguna línea del motor entra en tu binario — por eso cualquier compilador sirve 
+(cualquier versión de Visual Studio, MinGW, Clang) y por eso tu plugin solo funciona 
+con la Conan-Api instalada en el servidor.
+
+Para INSTALAR lo que compilaste, y para ejecutar un servidor, descarga el paquete del servidor: 
+es otra descarga, con el cargador y los plugins listos.
