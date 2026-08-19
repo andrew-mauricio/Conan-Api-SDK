@@ -205,6 +205,69 @@ brings the server down: the game destroys the parameter block on return and call
 
 ![The Exiled Lands](../.github/imagens/conan-3.jpg)
 
+## The whole game, with real signatures
+
+`ConanSDK.h` brings **8,287 Conan classes** with the members and functions the
+game's own reflection declares. It is not a list of names: **85% of the 36,757
+functions carry a complete signature** — type and name of every parameter,
+checked against the running server itself.
+
+```cpp
+#include "Conan/ConanSDK.h"
+
+void ConanPluginCarregar(const ConanApiTabela* api)
+{
+    ConanApi::UsarTabela(api);          // <- required, once
+
+    cm->TeleportPlayer(1000.0f, 2000.0f, 300.0f);   // a saved point
+    FVector where = actor->K2_GetActorLocation();    // where it is
+    cm->CheatSpawnItem(TemplateId, amount);          // an item for your shop
+}
+```
+
+**`ConanApi::UsarTabela(api)` is not optional.** The header has no way to reach
+the table on its own — it arrives in your `ConanPluginCarregar`. Without that
+line every SDK call quietly becomes nothing, which is why the first one warns on
+`stderr` instead of leaving you to hunt for the reason.
+
+An **output** parameter becomes a reference, and the API copies the value back:
+
+```cpp
+FHitResult hit{};
+actor->K2_SetActorLocation(target, false, hit, true);
+```
+
+Output text becomes `char*` plus capacity, **decoded** — never the game's
+pointer, which dies when the call returns:
+
+```cpp
+char left[64], right[64];
+lib->Split("conan|api", "|", left, sizeof(left), right, sizeof(right));
+```
+
+An output list becomes pointer, capacity and count, with the **elements**
+copied:
+
+```cpp
+AActor* found[32]; int howMany = 0;
+lib->SomeActorSearch(..., found, 32, howMany);
+```
+
+**You link nothing.** The entire SDK talks through the function table — that is
+why it behaves the same under MSVC, MinGW and clang. If your project ever asks
+for a `libconanapi.a`, something is wrong: there is no library of ours for you
+to link.
+
+The remaining 15% come out as a generic template, and that is deliberate: they
+are types that **carry ownership of game memory** (`TArray<FString>`, `TMap`,
+multicast delegates). Passing them by value would duplicate pointers, and
+someone would free twice. We prefer an untyped template over a signature that
+corrupts.
+
+---
+
+![The Exiled Lands](.github/imagens/conan-3.jpg)
+
 ## Published a plugin?
 
 Before publishing, check:
