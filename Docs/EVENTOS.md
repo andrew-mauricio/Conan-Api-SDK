@@ -121,7 +121,7 @@ Isso é o comportamento certo e ninguém adivinharia. Se você espera que o coma
 desapareça da sua própria tela, vai concluir que o hook falhou — e ele não falhou.
 Para dar retorno ao jogador, veja o limite de `FString` mais abaixo.
 
-Exemplo completo: `Exemplos/ExemploComando/`.
+Exemplo completo: `plugins/ExemploComando/`.
 
 ---
 

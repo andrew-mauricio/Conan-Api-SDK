@@ -83,7 +83,7 @@ extern "C" {
 
 // A versão sobe quando campos são ACRESCENTADOS. Nunca quando algo muda de
 // lugar — isso não acontece.
-#define CONAN_API_VERSAO 2
+#define CONAN_API_VERSAO 3
 
 // ── o que um hook recebe ────────────────────────────────────────────────────
 //
@@ -320,6 +320,37 @@ typedef struct ConanApiTabela
     // de carregar — travou em 4,35 GB em vez de 8,7 GB. Ligue com o servidor
     // já de pé, colha o que precisa, e deixe expirar.
     uint32_t (*HookProcessEventTudo)(ConanFnAntes antes, uint32_t segundos);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  ACRESCENTADOS NA VERSÃO 3 — FALAR COM O JOGADOR
+    //
+    //  Até aqui, todo plugin era MUDO: dava para ler o chat, cancelar comando e
+    //  escrever no log, mas não para responder. Uma loja não dizia "você
+    //  comprou", um teleporte não dizia "pronto", um menu de ajuda era
+    //  impossível.
+    //
+    //  A causa era estrutural e está medida: montar uma FString apontando para
+    //  buffer SEU e passá-la ao jogo derruba o servidor. O jogo destrói o bloco
+    //  de parâmetros ao retornar e chama o alocador DELE sobre memória SUA.
+    //
+    //  Resolvido pedindo ao próprio jogo que aloque, e sobrescrevendo o
+    //  conteúdo. Você não precisa saber disso — passe `const char*` e pronto.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Anuncia para TODOS os jogadores conectados. Devolve 1 se a chamada
+    // chegou ao jogo.
+    //
+    //     g_api->MensagemParaTodos("O servidor reinicia em 5 minutos.");
+    int (*MensagemParaTodos)(const char* texto);
+
+    // Fala com UM jogador, pelo nome que ele usa no jogo. O nome vem, por
+    // exemplo, do campo `userName` do chat (veja Docs/EVENTOS.md).
+    //
+    //     g_api->MensagemParaJogador(nome, "Kit entregue. Volte em 24h.");
+    //
+    // Devolve 0 se o jogador não estiver conectado — trate isso, porque ele
+    // pode ter saído entre o comando e a resposta.
+    int (*MensagemParaJogador)(const char* nomeDoJogador, const char* texto);
 
     // Campos novos entram AQUI, no fim, e `versao` sobe. Nunca no meio.
 } ConanApiTabela;
