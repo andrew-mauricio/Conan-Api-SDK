@@ -83,7 +83,7 @@ extern "C" {
 
 // A versão sobe quando campos são ACRESCENTADOS. Nunca quando algo muda de
 // lugar — isso não acontece.
-#define CONAN_API_VERSAO 3
+#define CONAN_API_VERSAO 4
 
 // ── o que um hook recebe ────────────────────────────────────────────────────
 //
@@ -373,6 +373,28 @@ typedef struct ConanApiTabela
     // tabela de localização). Esta usa ClientMessage, que faz o serviço com
     // FString e é a rota clássica da Unreal para o servidor escrever na tela.
     int (*MensagemNaTela)(void* playerController, const char* texto, float segundos);
+
+    // ── v4: TEXTO COM MEMORIA DO JOGO ───────────────────────────────────────
+    //
+    // Preenchem 16 bytes com uma FString / FText que o JOGO alocou. O plugin
+    // passa esses 16 bytes como argumento de qualquer funcao que peca FString
+    // ou FText, e nao precisa saber o layout de nenhuma das duas.
+    //
+    // POR QUE VOCE NAO PODE MONTAR ISSO SOZINHO
+    // ------------------------------------------
+    // O ProcessEvent destroi o bloco de parametros ao retornar e chama o
+    // alocador DO JOGO sobre o ponteiro que estiver la. Se for memoria do seu
+    // plugin, o servidor cai — esta medido neste projeto, nao e' teoria.
+    //
+    // Devolvem 1 se deu certo, 0 se nao. Zero significa que a chamada seguinte
+    // NAO deve ser feita: passar 16 bytes zerados como FString e' entregar
+    // ponteiro nulo ao jogo.
+    //
+    //     unsigned char t[16];
+    //     if (api->CriarTextoDoJogo("Bem-vindo!", t))
+    //         api->ChamarFuncao(pc, "AlgumaCoisa", ...);
+    int (*CriarTextoDoJogo)(const char* texto, void* destino16Bytes);
+    int (*CriarTextoRicoDoJogo)(const char* texto, void* destino16Bytes);
 
     // Campos novos entram AQUI, no fim, e `versao` sobe. Nunca no meio.
 } ConanApiTabela;
