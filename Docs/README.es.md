@@ -108,7 +108,8 @@ Los `-static-*` por el mismo motivo que el `/MT`.
 ```bash
 cp -r Exemplos/ExemploOla MiPlugin
 cd MiPlugin
-# renombra el .cpp y ajusta las dos líneas de compilar.sh que citan ExemploOla
+mv ExemploOla.cpp MiPlugin.cpp
+sed -i 's/ExemploOla/MiPlugin/g' compilar.sh
 ./compilar.sh
 ```
 
@@ -116,6 +117,7 @@ cd MiPlugin
 |---|---|
 | **ExemploOla** | el plugin más pequeño que aún prueba algo: hallar objeto, llamar función, escribir en el registro |
 | **ExemploComando** | interceptar `!comando` en el chat y tragarse el mensaje |
+| **ExemploVigia** | dar la bienvenida al entrar, contar quién está en línea y responder comandos del chat |
 | **ExemploVip** | consultar a Permission y seguir funcionando cuando no está instalado |
 | **ExemploAgendado** | ejecutar código cada cierto tiempo, en el hilo correcto |
 | **ExemploBlueprint** | interceptar ejecución de Blueprint — lo que el hook por nombre no ve |

@@ -108,7 +108,8 @@ The `-static-*` for the same reason as the `/MT`.
 ```bash
 cp -r Exemplos/ExemploOla MyPlugin
 cd MyPlugin
-# rename the .cpp and adjust the two lines of compilar.sh that mention ExemploOla
+mv ExemploOla.cpp MyPlugin.cpp
+sed -i 's/ExemploOla/MyPlugin/g' compilar.sh
 ./compilar.sh
 ```
 
@@ -116,6 +117,7 @@ cd MyPlugin
 |---|---|
 | **ExemploOla** | the smallest plugin that still proves something: find an object, call a function, write to the log |
 | **ExemploComando** | intercept `!command` in chat and swallow the message |
+| **ExemploVigia** | greet players on login, count who is online and answer chat commands |
 | **ExemploVip** | query Permission and keep working when it is not installed |
 | **ExemploAgendado** | run code every so often, on the right thread |
 | **ExemploBlueprint** | intercept Blueprint execution — what a hook by name does not see |

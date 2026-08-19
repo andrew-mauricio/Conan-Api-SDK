@@ -108,7 +108,8 @@ Os `-static-*` pelo mesmo motivo do `/MT`.
 ```bash
 cp -r Exemplos/ExemploOla MeuPlugin
 cd MeuPlugin
-# renomeie o .cpp e ajuste as duas linhas do compilar.sh que citam ExemploOla
+mv ExemploOla.cpp MeuPlugin.cpp
+sed -i 's/ExemploOla/MeuPlugin/g' compilar.sh
 ./compilar.sh
 ```
 
@@ -116,6 +117,7 @@ cd MeuPlugin
 |---|---|
 | **ExemploOla** | o menor plugin que ainda prova algo: achar objeto, chamar função, escrever no log |
 | **ExemploComando** | interceptar `!comando` no chat e engolir a mensagem |
+| **ExemploVigia** | dar boas-vindas no login, contar quem está online e responder comandos no chat |
 | **ExemploVip** | consultar o Permission e continuar funcionando quando ele não está instalado |
 | **ExemploAgendado** | rodar código de tempos em tempos, na thread certa |
 | **ExemploBlueprint** | interceptar execução de Blueprint — o que o hook por nome não vê. **Leia o aviso no topo do arquivo antes de copiar**: a versão anterior dele deixava uma janela em que o detour rodava sem o ponteiro original, e nessa janela toda execução de Blueprint era descartada em silêncio — como o login do Conan é feito de Blueprint, ninguém entrava no servidor |
