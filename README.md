@@ -1,5 +1,13 @@
 ![Conan Exiles Enhanced](.github/imagens/conan-header.jpg)
 
+<p align="center">
+  <a href="README.md"><img src=".github/imagens/bandeiras/br.png" alt="Portugues" height="13">&nbsp;<b>Portugu&ecirc;s</b></a>
+  &nbsp;&nbsp;&middot;&nbsp;&nbsp;
+  <a href="Docs/README.en.md"><img src=".github/imagens/bandeiras/us.png" alt="English" height="13">&nbsp;English</a>
+  &nbsp;&nbsp;&middot;&nbsp;&nbsp;
+  <a href="Docs/README.es.md"><img src=".github/imagens/bandeiras/es.png" alt="Espanol" height="13">&nbsp;Espa&ntilde;ol</a>
+</p>
+
 # Conan-Api SDK — escreva plugins para Conan Exiles
 
 Você precisa de **um header** e de um compilador C++. Não tem biblioteca para
@@ -217,3 +225,11 @@ plugins prontos e como instalar.
 *Conan Exiles* é da **Funcom**. As imagens são material de divulgação oficial do
 Steam. Este projeto é independente e não tem vínculo com a Funcom nem com a
 Inflexion Games.
+
+<p align="center">
+  <a href="README.md"><img src=".github/imagens/bandeiras/br.png" alt="Portugues" height="13">&nbsp;<b>Portugu&ecirc;s</b></a>
+  &nbsp;&nbsp;&middot;&nbsp;&nbsp;
+  <a href="Docs/README.en.md"><img src=".github/imagens/bandeiras/us.png" alt="English" height="13">&nbsp;English</a>
+  &nbsp;&nbsp;&middot;&nbsp;&nbsp;
+  <a href="Docs/README.es.md"><img src=".github/imagens/bandeiras/es.png" alt="Espanol" height="13">&nbsp;Espa&ntilde;ol</a>
+</p>
