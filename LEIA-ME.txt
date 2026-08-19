@@ -1,4 +1,4 @@
-Conan-Api SDK 2.2.0 — escrever plugins para Conan Exiles
+Conan-Api SDK 2.3.0 — escrever plugins para Conan Exiles
 ===========================================================
 
 Tabela da API: v5
