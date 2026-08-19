@@ -83,7 +83,7 @@ extern "C" {
 
 // A versão sobe quando campos são ACRESCENTADOS. Nunca quando algo muda de
 // lugar — isso não acontece.
-#define CONAN_API_VERSAO 4
+#define CONAN_API_VERSAO 5
 
 // ── o que um hook recebe ────────────────────────────────────────────────────
 //
@@ -395,6 +395,32 @@ typedef struct ConanApiTabela
     //         api->ChamarFuncao(pc, "AlgumaCoisa", ...);
     int (*CriarTextoDoJogo)(const char* texto, void* destino16Bytes);
     int (*CriarTextoRicoDoJogo)(const char* texto, void* destino16Bytes);
+
+    // ── v5: O MEMBRO PELO NOME, E SE ELE E' REPLICADO ────────────────────────
+    //
+    // OffsetDoMembro devolve o offset NESTA build, resolvido pela reflexão, ou
+    // -1 se não achar. Prefira isto a gravar o número no seu plugin: offset
+    // gravado vira bomba-relógio no dia em que o jogo atualizar, e o sintoma é
+    // ler lixo achando que leu o jogo.
+    //
+    //     const int32_t off = api->OffsetDoMembro(ator, "RelativeLocation");
+    //     if (off >= 0) api->LerMembro(ator, off, &pos, sizeof(pos));
+    //
+    // EhReplicado responde 1 · 0 · -1. O -1 NÃO é "pode escrever": é "não sei".
+    //
+    // POR QUE VOCÊ DEVE PERGUNTAR ANTES DE ESCREVER
+    // ----------------------------------------------
+    // Escrever direto num campo que o jogo replica funciona no servidor e o
+    // cliente não vê. Em campo de posição é pior: a predição do cliente corrige
+    // de volta, e o sintoma é rubber-banding que ninguém liga a um plugin.
+    //
+    // Quando existir uma função do jogo que faça a mudança, chame-a: ela
+    // percorre o caminho que já replica. Escrever no campo fura esse caminho.
+    // 1.222 dos 36.210 membros desta build são replicados — entre eles
+    // SceneComponent::RelativeLocation.
+    int32_t (*OffsetDoMembro)(void* objeto, const char* nome);
+    int     (*EhReplicado)(void* objeto, uint32_t offset);
+    int     (*NomeDoMembro)(void* objeto, uint32_t offset, char* saida, int tam);
 
     // Campos novos entram AQUI, no fim, e `versao` sobe. Nunca no meio.
 } ConanApiTabela;

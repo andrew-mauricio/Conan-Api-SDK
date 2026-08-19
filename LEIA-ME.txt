@@ -1,7 +1,7 @@
-Conan-Api SDK 1.9.2 — escrever plugins para Conan Exiles
+Conan-Api SDK 2.2.0 — escrever plugins para Conan Exiles
 ===========================================================
 
-Tabela da API: v4
+Tabela da API: v5
 Serve para a build 24784646 do jogo (UE 5.6.1 (++exiles+release))
 
 O QUE VOCE PRECISA
@@ -53,7 +53,7 @@ VERSOES: O QUE PRECISA BATER
 
   No seu PluginInfo.json, declare de qual versao da tabela voce precisa:
 
-      { "FullName":"Meu Plugin", "Version":"1.0.0", "MinApiVersion":4 }
+      { "FullName":"Meu Plugin", "Version":"1.0.0", "MinApiVersion":5 }
 
   Se o servidor tiver uma API mais velha que isso, o carregador RECUSA seu
   plugin e diz qual versao falta — em vez de deixar rodar lendo estrutura que
