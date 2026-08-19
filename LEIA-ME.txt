@@ -1,0 +1,23 @@
+Conan-Api — SDK para escrever plugins
+======================================
+
+Voce precisa de UM header e de um compilador C++. Nada para linkar.
+
+    include/Conan/ConanPluginApi.h    a tabela da API — e' so isto
+    include/Conan/ConanPermission.h   consultar permissoes/VIP (opcional)
+    Exemplos/                         seis exemplos com fonte, para copiar
+    Docs/PARA-DESENVOLVEDORES.md      o guia
+    Docs/EVENTOS.md                   quais eventos do jogo existem
+
+COMECE ASSIM:
+
+    cp -r Exemplos/ExemploOla MeuPlugin
+    cd MeuPlugin && ./compilar.sh
+
+Seu plugin RECEBE a API numa tabela de funcoes e chama tudo por api->. Nenhuma
+linha do motor entra no seu binario — por isso qualquer compilador serve
+(Visual Studio de qualquer versao, MinGW, clang) e por isso o seu plugin so
+funciona com a Conan-Api instalada no servidor.
+
+Para INSTALAR o que voce compilou, e para rodar um servidor, baixe o pacote do
+servidor: e' outro download, com o carregador e os plugins prontos.
