@@ -352,6 +352,17 @@ typedef struct ConanApiTabela
     // pode ter saído entre o comando e a resposta.
     int (*MensagemParaJogador)(const char* nomeDoJogador, const char* texto);
 
+    // Escreve na TELA do jogador, não no chat. `playerController` é o dele —
+    // você o tem no hook de login, ou por FindObjects("ConanPlayerController").
+    // `segundos` é quanto tempo o texto fica; 0 usa o padrão (5 s).
+    //
+    //     g_api->MensagemNaTela(pc, "Bem-vindo ao servidor!", 8.0f);
+    //
+    // As funções de HUD do Conan recebem FText (tipo bem mais complexo, com
+    // tabela de localização). Esta usa ClientMessage, que faz o serviço com
+    // FString e é a rota clássica da Unreal para o servidor escrever na tela.
+    int (*MensagemNaTela)(void* playerController, const char* texto, float segundos);
+
     // Campos novos entram AQUI, no fim, e `versao` sobe. Nunca no meio.
 } ConanApiTabela;
 

@@ -63,6 +63,92 @@ reordenamos campo — só acrescentamos no fim — mas a checagem é sua rede.
 
 ---
 
+## Versões: o que precisa bater e o que não precisa
+
+Isto costuma ser a primeira dúvida, e a resposta contraria o que a maioria das
+APIs de plugin de jogo obriga.
+
+### Seu compilador NÃO precisa ser o mesmo que o nosso
+
+Não existe biblioteca nossa para você linkar. O que atravessa a fronteira é uma
+`struct` de ponteiros de função em **C puro**, com convenção `__cdecl` — e sobre
+isso todo compilador concorda.
+
+| você usa | funciona? |
+|---|---|
+| Visual Studio 2017, 2019, 2022 (v141, v142, v143) | sim |
+| mingw-w64 (qualquer GCC recente) | sim |
+| clang com alvo Windows | sim |
+
+Em APIs que entregam biblioteca compilada, isso não é verdade: o layout de
+`std::string` e de vtable muda entre MSVC e MinGW — e muda até entre versões do
+MSVC. Quando não bate, não dá erro claro. Linka, roda, e corrompe memória na
+primeira string que cruzar a fronteira. Aqui esse problema não existe porque
+nada nosso é compilado dentro do seu plugin.
+
+**O que precisa bater:** x64 e `/MT` (ou `-static-*` no MinGW). Isso não é sobre
+compatibilidade com a gente — é sobre o servidor rodar sob Wine, onde o runtime
+da Microsoft pode não estar instalado.
+
+### A versão da TABELA, e o que ela significa
+
+O header traz um número:
+
+```c
+#define CONAN_API_VERSAO 3
+```
+
+Ele sobe quando **funções novas são acrescentadas** — e elas entram sempre no
+**fim** da struct. Nunca removemos nem reordenamos campo, e é isso que faz um
+plugin compilado hoje continuar valendo amanhã.
+
+Declare no seu `PluginInfo.json` a versão mínima de que você precisa:
+
+```json
+{ "FullName": "Meu Plugin", "Version": "1.0.0", "MinApiVersion": 3 }
+```
+
+| situação | o que acontece |
+|---|---|
+| você usa só o que existe na v2, e declara `"MinApiVersion": 2` | roda em qualquer API v2 ou superior |
+| você usa `MensagemNaTela` (v3) mas declara 2 | o carregador deixa carregar, e o **seu** teste de `api->tamanho` é a última defesa |
+| você declara 3 e o servidor tem a v2 | o carregador **recusa antes de carregar** e diz qual versão falta |
+
+Por isso a checagem no começo do seu `ConanPluginCarregar` não é formalidade:
+
+```cpp
+if (!api || api->tamanho < sizeof(ConanApiTabela)) return;
+```
+
+Sem ela, um plugin compilado contra uma tabela maior lê ponteiro além do fim da
+struct e chama lixo, num servidor com API mais velha.
+
+### A versão da API e a BUILD DO JOGO
+
+São coisas diferentes, e as duas aparecem em toda release:
+
+```
+Conan-Api 1.1.0 — build 24383534
+```
+
+- **`1.1.0`** — a versão do projeto
+- **`build 24383534`** — a versão do **Conan Exiles** para a qual esta API serve
+
+A API conhece o jogo por endereços de memória daquela build. Quando a Funcom
+atualizar, esses endereços mudam de lugar e a API **se recusa a carregar**, de
+propósito, dizendo isso no log.
+
+**E o seu plugin, precisa ser recompilado quando isso acontecer?** Normalmente
+**não** — você fala com a tabela, e a tabela não muda de forma. Quem é regerada
+é a API.
+
+A exceção: se o seu plugin usa **offset cru do jogo** (como o `0x068` do
+`ChatRpcData` no exemplo de chat), esse número pode ter mudado, e aí você precisa
+conferir. Quanto mais você usar as funções da tabela em vez de offsets diretos,
+menos a atualização do jogo te afeta.
+
+---
+
 ## Visual Studio
 
 1. **Novo Projeto** → *Biblioteca de Vínculo Dinâmico (DLL)*
