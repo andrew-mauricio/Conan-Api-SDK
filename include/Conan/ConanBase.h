@@ -37,6 +37,10 @@
 // ele nunca ter entrado no pacote que o README anunciava.
 #include "ConanPluginApi.h"
 
+// <atomic> por causa do cache de offset nos acessores gerados: `static int32_t`
+// lido e escrito por duas threads e' data race formal, mesmo quando as duas
+// gravam o mesmo valor — e ProcessEvent chega de 34 threads nesta build.
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -403,6 +407,11 @@ namespace ConanApi
     // UFunction nativas ainda nao existem, e o I-4 sairia "4 de 6" para sempre.
     bool ReconferirBuild();
 
+    // Arma os hooks que foram PEDIDOS antes de a reflexao existir. Chamada uma
+    // vez, no instante em que o mundo monta — e' o que faz um comando responder
+    // no primeiro segundo em vez de depois de o carregador ativar os plugins.
+    void DrenarPendentes();
+
     // ── MEMBRO POR NOME, RESOLVIDO EM RUNTIME ───────────────────────────────
     //
     // Devolve o offset do membro nesta build, ou -1 se nao achar. Sobe a
@@ -534,6 +543,83 @@ namespace ConanApi
         T* destino;
         explicit Fora(T& d) : destino(&d) {}
     };
+
+    // ── O RETORNO QUE NAO CABE NUM RETORNO ──────────────────────────────────
+    //
+    // Funcao que devolve FString/FText/TArray nao pode ter isso como valor de
+    // retorno em C++: sao 16 bytes com ponteiro do jogo dentro, que morre
+    // quando o ProcessEvent destroi o bloco. Devolve-los seria entregar um
+    // ponteiro pendurado — e o sintoma apareceria longe daqui.
+    //
+    // Sao 1.125 funcoes desta build (365 FString + 219 FText + 541 TArray).
+    // Todas ficavam genericas por causa disso.
+    //
+    // A saida e' a mesma dos parametros de saida: decodificar na janela em que
+    // o dado vale. Estes envelopes marcam "este destino e' o RETORNO", e o
+    // motor traduz para OffsetRetorno.
+    struct RetornoTexto
+    {
+        char* destino; int tam;
+        RetornoTexto(char* d, int t) : destino(d), tam(t) { if (d && t > 0) d[0] = 0; }
+    };
+    inline RetornoTexto ParaRetornoTexto(char* d, int t) { return RetornoTexto(d, t); }
+
+    struct RetornoTextoRico
+    {
+        char* destino; int tam;
+        RetornoTextoRico(char* d, int t) : destino(d), tam(t) { if (d && t > 0) d[0] = 0; }
+    };
+    inline RetornoTextoRico ParaRetornoTextoRico(char* d, int t)
+    { return RetornoTextoRico(d, t); }
+
+    template<typename T>
+    struct RetornoLista
+    {
+        T* destino; int capacidade; int* quantos;
+        RetornoLista(T* d, int cap, int& n) : destino(d), capacidade(cap), quantos(&n)
+        { n = 0; }
+    };
+    template<typename T>
+    inline RetornoLista<T> ParaRetornoLista(T* d, int cap, int& n)
+    { return RetornoLista<T>(d, cap, n); }
+
+    // ── UPARAM(ref) DE TEXTO: entra E volta no mesmo buffer ─────────────────
+    //
+    // Sao 1.399 funcoes desta build — o maior grupo de genericas depois que os
+    // motivos passaram a ser precisos. Antes ficavam escondidas sob o rotulo
+    // "tem N parametros de SAIDA", que dizia que HA saida e nao POR QUE ela
+    // nao podia ser expressa.
+    //
+    // As duas metades ja' existiam separadas:
+    //   `Texto`     monta uma FString com memoria do JOGO a partir de char*
+    //   `ForaTexto` decodifica um slot de FString de volta para char*
+    //
+    // Um UPARAM(ref) de FString e' exatamente as duas, no MESMO slot: escreve
+    // antes, le' depois. O envelope abaixo so' junta o par — nao ha mecanismo
+    // novo, e por isso nao ha risco novo de posse.
+    struct EntreSaiTexto
+    {
+        Texto entrada;      // a FString do jogo, ja' montada
+        char* destino;
+        int   tam;
+        EntreSaiTexto(char* buf, int t)
+            : entrada(buf ? buf : ""), destino(buf), tam(t) {}
+    };
+    inline EntreSaiTexto ParaEntreSaiTexto(char* buf, int tam)
+    { return EntreSaiTexto(buf, tam); }
+
+    // O mesmo par, para FText: TextoRico monta pelo Conv_StringToText do jogo,
+    // e a volta passa pelo Conv_TextToString. Sao 193 funcoes.
+    struct EntreSaiTextoRico
+    {
+        TextoRico entrada;
+        char*     destino;
+        int       tam;
+        EntreSaiTextoRico(char* buf, int t)
+            : entrada(buf ? buf : ""), destino(buf), tam(t) {}
+    };
+    inline EntreSaiTextoRico ParaEntreSaiTextoRico(char* buf, int tam)
+    { return EntreSaiTextoRico(buf, tam); }
     template<typename T> inline Fora<T> ParaFora(T& d) { return Fora<T>(d); }
 
     // Onde copiar de volta, e quanto. Preenchido pelo Empacotar, consumido pelo
@@ -1314,6 +1400,46 @@ namespace ConanApi
                                       uint32_t(sizeof(T)), 0, nullptr }; ++c.nsai; }
         c.Buraco();
         ++c.indice;
+    }
+
+    inline void ColetaUm(ColetaArgs& c, const EntreSaiTextoRico& v)
+    {
+        c.Entrada(v.entrada.bruto, 16);
+        if (c.nsai < int(MAX_PARMS))
+        { c.sai[c.nsai] = ConanSaida{ c.indice, v.destino, CONAN_SAIDA_TEXTO_RICO,
+                                      uint32_t(v.tam), 0, nullptr }; ++c.nsai; }
+        ++c.indice;
+    }
+
+    inline void ColetaUm(ColetaArgs& c, const EntreSaiTexto& v)
+    {
+        c.Entrada(v.entrada.bruto, 16);
+        if (c.nsai < int(MAX_PARMS))
+        { c.sai[c.nsai] = ConanSaida{ c.indice, v.destino, CONAN_SAIDA_TEXTO,
+                                      uint32_t(v.tam), 0, nullptr }; ++c.nsai; }
+        ++c.indice;
+    }
+
+    // Retorno: indice -1, e NAO consome posicao de parametro.
+    inline void ColetaUm(ColetaArgs& c, const RetornoTexto& v)
+    {
+        if (c.nsai < int(MAX_PARMS))
+        { c.sai[c.nsai] = ConanSaida{ -1, v.destino, CONAN_SAIDA_TEXTO,
+                                      uint32_t(v.tam), 0, nullptr }; ++c.nsai; }
+    }
+    inline void ColetaUm(ColetaArgs& c, const RetornoTextoRico& v)
+    {
+        if (c.nsai < int(MAX_PARMS))
+        { c.sai[c.nsai] = ConanSaida{ -1, v.destino, CONAN_SAIDA_TEXTO_RICO,
+                                      uint32_t(v.tam), 0, nullptr }; ++c.nsai; }
+    }
+    template<typename T>
+    inline void ColetaUm(ColetaArgs& c, const RetornoLista<T>& v)
+    {
+        if (c.nsai < int(MAX_PARMS))
+        { c.sai[c.nsai] = ConanSaida{ -1, v.destino, CONAN_SAIDA_LISTA,
+                                      uint32_t(v.capacidade), uint32_t(sizeof(T)),
+                                      v.quantos }; ++c.nsai; }
     }
 
     template<typename... A>

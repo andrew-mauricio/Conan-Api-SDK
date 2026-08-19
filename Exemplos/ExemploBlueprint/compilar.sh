@@ -21,9 +21,22 @@ set -e
 AQUI="$(cd "$(dirname "$0")" && pwd)"
 
 INC=""
-for c in "$AQUI/../../include" "$AQUI/../../api/include" "$AQUI/../include" "$CONAN_SDK_INCLUDE"; do
-    [ -n "$c" ] && [ -f "$c/Conan/ConanPluginApi.h" ] && { INC="$c"; break; }
-done
+# Primeiro o que o dev apontou na mao — ele manda mais que qualquer heuristica.
+if [ -n "${CONAN_SDK_INCLUDE:-}" ] && [ -f "$CONAN_SDK_INCLUDE/Conan/ConanPluginApi.h" ]; then
+    INC="$CONAN_SDK_INCLUDE"
+else
+    # Sobe a arvore procurando. Cobre a pasta do exemplo (Exemplos/X/), o plugin
+    # copiado para a raiz do SDK (a receita do guia), e qualquer profundidade que
+    # o dev invente — sem lista de caminhos para envelhecer.
+    d="$AQUI"
+    for _ in 1 2 3 4 5 6; do
+        for c in "$d/include" "$d/api/include"; do
+            [ -f "$c/Conan/ConanPluginApi.h" ] && { INC="$c"; break 2; }
+        done
+        d="$(dirname "$d")"
+        [ "$d" = "/" ] && break
+    done
+fi
 if [ -z "$INC" ]; then
     echo "  x nao achei Conan/ConanPluginApi.h. Procurei a partir de: $AQUI"
     echo "    Aponte com:  CONAN_SDK_INCLUDE=/caminho/do/sdk/include ./compilar.sh"

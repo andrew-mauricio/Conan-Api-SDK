@@ -182,10 +182,10 @@ do número. Ele resolve pela reflexão, na build que estiver rodando.
 São coisas diferentes, e as duas aparecem em toda release:
 
 ```
-Conan-Api 2.5.0 — build 24784646
+Conan-Api 2.6.0 — build 24784646
 ```
 
-- **`2.5.0`** — a versão do projeto
+- **`2.6.0`** — a versão do projeto
 - **`build 24784646`** — a versão do **Conan Exiles** para a qual esta API serve
 
 A API conhece o jogo por endereços de memória daquela build. Quando a Funcom
@@ -246,7 +246,19 @@ sed -i 's/ExemploOla/MeuPlugin/g' compilar.sh
 ```
 
 Saiu `MeuPlugin.dll`. Para instalar, copie a **pasta** `MeuPlugin/` (com a DLL
-dentro) para `Conan-Api/Plugins/` do servidor e reinicie. O nome da pasta e o
+dentro) para `Conan-Api/Plugins/` do servidor e reinicie.
+
+**Quer o plugin no seu próprio projeto, fora da pasta do SDK?** Pode — só diga
+onde está o `include`:
+
+```bash
+CONAN_SDK_INCLUDE=/caminho/do/Conan-Api-SDK-v2.5.0/include ./compilar.sh
+```
+
+O `compilar.sh` sobe a árvore de diretórios procurando o header sozinho, então
+enquanto o plugin estiver **dentro** do SDK (em qualquer profundidade) ele acha.
+Movido para fora, ele não adivinha: para e diz esta linha, em vez de deixar o
+compilador reclamar de um `#include` que parece errado e não é. O nome da pasta e o
 nome da DLL devem bater — é assim que o carregador escolhe qual carregar.
 
 ## A estrutura de um plugin
@@ -375,6 +387,43 @@ vez. É o caminho que ninguém exercita e é o que roda no pior dia do dono.
 
 ---
 
+## Responder no primeiro segundo: registre cedo
+
+O servidor aceita jogador **antes** de o mundo terminar de montar. Nessa janela
+a reflexão ainda não existe, então um plugin ativado só depois dela deixa sem
+resposta quem digitou um comando cedo.
+
+Para isso existe um segundo ponto de entrada, opcional:
+
+```cpp
+extern "C" __declspec(dllexport)
+void ConanPluginRegistrar(const ConanApiTabela* api)   // ANTES do mundo
+{
+    ConanApi::UsarTabela(api);
+    g_id = api->HookProcessEvent("ServerSendChatMessage", AoFalar, nullptr, 100);
+}
+
+extern "C" __declspec(dllexport)
+void ConanPluginCarregar(const ConanApiTabela* api)    // DEPOIS do mundo
+{
+    ...
+}
+```
+
+`HookProcessEvent` chamado no `Registrar` **enfileira** e devolve um id válido
+na hora. A API arma o hook no instante em que o mundo monta — antes de qualquer
+plugin ser ativado.
+
+**O que você NÃO pode fazer no `Registrar`:** tocar em objeto do jogo. Não há
+mundo, não há reflexão, e `FindClass`/`FindObjects` devolvem nada. Se você
+precisa do mundo, o lugar é o `Carregar`.
+
+**Você não precisa exportar o `Registrar`.** Sem ele o plugin funciona
+exatamente como antes — os hooks entram quando o `Carregar` roda. O `Registrar`
+só encurta a janela.
+
+---
+
 ## O que o seu hook recebe
 
 O guia usa `c->Parms` nos exemplos, mas a struct tem mais — e `c->Obj` é o que
@@ -443,9 +492,10 @@ global, e chamar quase qualquer coisa trava o processo inteiro. Faça tudo no
 
 ## O jogo inteiro, com assinatura de verdade
 
-Além da tabela, o pacote traz o **`ConanSDK.h`**: as classes do Conan com os
-membros e as funções que a reflexão do jogo declara — 85% delas com assinatura
-completa, tipo e nome de cada parâmetro, conferidos contra o servidor rodando.
+Além da tabela, o pacote traz o **`ConanSDK.h`**: **9.247 classes** do Conan com
+os membros e as funções que a reflexão do jogo declara. Não é lista de nomes:
+**89% das 38.340 funções têm assinatura completa** — tipo e nome de cada
+parâmetro, conferidos contra o próprio servidor rodando, com o mundo cheio.
 
 ```cpp
 #include "Conan/ConanSDK.h"
@@ -536,6 +586,36 @@ Se precisar passar texto a uma função do jogo por conta própria, use
 com o motivo em `TextoRecusa`. Recusa não é falha: é a API se negando a fazer
 algo que executaria meia instrução um dia, corrompendo memória horas depois sem
 erro legível.
+
+---
+
+## Instalar sem derrubar o servidor
+
+O dono de servidor não precisa reiniciar para instalar o seu plugin:
+
+```
+1. copiar a pasta MeuPlugin/ para Conan-Api/Plugins/
+2. criar o arquivo vazio Conan-Api/CARREGAR-NOVOS
+```
+
+Em até 3 segundos o carregador atende, roda as mesmas conferências do
+carregamento normal e chama o seu `ConanPluginCarregar`. O log diz o resultado:
+
+```
+[novos] [ok] MeuPlugin carregado SEM reiniciar o servidor.
+```
+
+**Trocar a versão de um plugin já carregado ainda exige reiniciar.** Isso não é
+limitação temporária: o seu plugin, depois de carregado, tem hooks armados e
+possivelmente tarefas agendadas apontando para dentro da sua DLL. Descarregá-la
+com qualquer um deles vivo faria o jogo saltar para memória desmapeada mais
+tarde, longe da causa. Preferimos pedir um reinício a entregar isso.
+
+**O que isso muda para você:** o seu `ConanPluginCarregar` pode rodar com o
+mundo **já cheio** — jogadores conectados, objetos vivos, outros plugins
+funcionando. Se ele assume que está no arranque (que a lista de jogadores está
+vazia, que nada foi inicializado ainda), vai se surpreender. Escreva-o para
+funcionar nos dois momentos.
 
 ---
 
