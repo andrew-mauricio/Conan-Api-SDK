@@ -205,6 +205,68 @@ memoria **tuya**. Esto fue probado, no es teoría.
 
 ![El Exilio](../.github/imagens/conan-3.jpg)
 
+## El juego entero, con firmas de verdad
+
+`ConanSDK.h` trae **8.287 clases** de Conan con los miembros y las funciones que
+declara la propia reflexión del juego. No es una lista de nombres: **el 85% de
+las 36.757 funciones tiene firma completa** — tipo y nombre de cada parámetro,
+comprobados contra el servidor en marcha.
+
+```cpp
+#include "Conan/ConanSDK.h"
+
+void ConanPluginCarregar(const ConanApiTabela* api)
+{
+    ConanApi::UsarTabela(api);          // <- obligatoria, una vez
+
+    cm->TeleportPlayer(1000.0f, 2000.0f, 300.0f);   // un punto guardado
+    FVector donde = actor->K2_GetActorLocation();    // dónde está
+    cm->CheatSpawnItem(TemplateId, cantidad);        // un objeto para tu tienda
+}
+```
+
+**`ConanApi::UsarTabela(api)` no es opcional.** El header no tiene de dónde sacar
+la tabla por su cuenta — llega en tu `ConanPluginCarregar`. Sin esa línea toda
+llamada del SDK se convierte en nada, en silencio; por eso la primera avisa por
+`stderr` en vez de dejarte buscar el motivo.
+
+Un parámetro de **salida** se vuelve referencia, y la API copia el valor de
+vuelta:
+
+```cpp
+FHitResult golpe{};
+actor->K2_SetActorLocation(destino, false, golpe, true);
+```
+
+El texto de salida se vuelve `char*` con capacidad, **decodificado** — nunca el
+puntero del juego, que muere cuando la llamada retorna:
+
+```cpp
+char izq[64], der[64];
+lib->Split("conan|api", "|", izq, sizeof(izq), der, sizeof(der));
+```
+
+Una lista de salida se vuelve puntero, capacidad y cuenta, con los **elementos**
+copiados:
+
+```cpp
+AActor* hallados[32]; int cuantos = 0;
+lib->AlgunaBusquedaDeActores(..., hallados, 32, cuantos);
+```
+
+**No enlazas nada.** El SDK entero habla por la tabla de funciones — por eso se
+comporta igual en MSVC, MinGW y clang. Si algún día tu proyecto pide una
+`libconanapi.a`, algo va mal: no existe biblioteca nuestra que enlazar.
+
+El 15% restante sale como plantilla genérica, y es deliberado: son tipos que
+**cargan posesión de memoria del juego** (`TArray<FString>`, `TMap`, delegados
+multicast). Pasarlos por valor duplicaría punteros, y alguien liberaría dos
+veces. Preferimos una plantilla sin tipo a una firma que corrompe.
+
+---
+
+![Las Tierras del Exilio](.github/imagens/conan-3.jpg)
+
 ## ¿Publicaste un plugin?
 
 Antes de publicar, comprueba:
