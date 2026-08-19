@@ -235,6 +235,39 @@ Conan-Api/Plugins/MeuPlugin/
    meubanco.db          <- o que você gravar nasce aqui
 ```
 
+### O que é obrigatório, e o que não é
+
+**Só a DLL.** Um plugin com nada além dela carrega e funciona — o `Cartografo` e
+o `GravadorDeEventos` deste projeto rodam assim, e o log mostra:
+
+```
+  [ok] Cartografo   [sem PluginInfo.json]
+```
+
+Os outros dois arquivos são escolhas suas:
+
+| arquivo | obrigatório? | quem lê |
+|---|---|---|
+| `MeuPlugin.dll` | **sim** — é a única coisa que o carregador precisa | o carregador |
+| `PluginInfo.json` | não | o carregador, **se** existir |
+| `config.json` | não | **o seu plugin**; a API nem abre o arquivo |
+
+O `config.json` não tem formato imposto por ninguém. A API só te diz **onde** ele
+fica, com `CaminhoConfig("MeuPlugin")`, e o resto é com você — pode ser JSON,
+pode ser outro nome, pode não existir.
+
+**Sem `PluginInfo.json` você perde quatro coisas**, e vale saber quais antes de
+decidir pular:
+
+- o nome e a versão do seu plugin no log (aparece só o nome da pasta)
+- `MinApiVersion` — o carregador não tem como recusar seu plugin numa API velha
+- `Dependencies` — ninguém garante que o Permission suba antes de você
+- `BuildDoJogo` / `UsaOffsetsCrus` — sem eles, seu plugin carrega depois de uma
+  atualização do jogo mesmo quando não deveria
+
+Para um plugin que você só usa, nada disso importa. Para um que você **publica**,
+todos importam.
+
 O `PluginInfo.json` é o cartão de identidade do seu plugin:
 
 ```json
