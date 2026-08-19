@@ -16,11 +16,14 @@ Você precisa de **um header** e de um compilador C++. Não tem biblioteca para
 linkar, não tem código nosso para compilar junto, não tem projeto para
 configurar.
 
+Um plugin inteiro cabe numa tela:
+
 ```cpp
 #include "Conan/ConanPluginApi.h"
 
 static const ConanApiTabela* g_api = nullptr;
 
+// Chamado toda vez que alguém fala no chat.
 extern "C" ConanAcao AoFalar(ConanChamada* c)
 {
     char texto[512];
@@ -29,9 +32,10 @@ extern "C" ConanAcao AoFalar(ConanChamada* c)
     if (texto[0] != '!') return CONAN_CONTINUAR;   // conversa normal, deixa passar
 
     g_api->Log("alguém digitou: %s", texto);
-    return CONAN_CANCELAR;                          // engole a mensagem
+    return CONAN_CANCELAR;                          // engole: é comando, não conversa
 }
 
+// Chamado uma vez, quando o servidor está pronto.
 extern "C" __declspec(dllexport)
 void ConanPluginCarregar(const ConanApiTabela* api)
 {
@@ -42,21 +46,17 @@ void ConanPluginCarregar(const ConanApiTabela* api)
 ```
 
 Compile como DLL x64, ponha numa pasta com o nome do seu plugin dentro de
-`Conan-Api/Plugins/`, reinicie o servidor. Acabou.
+`Conan-Api/Plugins/`, suba o servidor. Acabou.
 
 ---
 
-## Por que o seu compilador não importa
+## Como isso funciona, em poucas palavras
 
-A maioria das APIs de plugin te obriga a usar exatamente o compilador que elas
-usaram. O motivo é real: biblioteca C++ não atravessa compilador. O layout de
-`std::string` e de vtable muda entre MSVC e MinGW, e muda até entre versões do
-MSVC. Quando não bate, não dá erro claro — linka, roda, e corrompe memória na
-primeira string que cruzar a fronteira.
+O servidor do Conan não tem sistema de plugins. Quem cria um é a **Conan-Api**,
+que entra no processo do jogo junto com ele e mapeia tudo que existe lá dentro
+por reflexão — as classes, os membros, as funções.
 
-Aqui isso não acontece, porque **você não linka nada nosso**. O carregador chama
-o seu plugin passando uma tabela de ponteiros de função, e você chama tudo por
-`api->`:
+O seu plugin não conversa com o jogo. Ele conversa com a API:
 
 ```mermaid
 flowchart LR
@@ -68,29 +68,63 @@ flowchart LR
     style D fill:#1a3a52,color:#fff
 ```
 
-Tudo em C puro: `struct` de ponteiros de função, convenção `__cdecl`. Visual
-Studio de qualquer versão, MinGW, clang — todos concordam sobre isso.
+Quando o carregador liga o seu plugin, ele passa uma **tabela de ponteiros de
+função**. Tudo que você faz sai dali: `api->Log(...)`, `api->FindObjects(...)`,
+`api->HookProcessEvent(...)`. Nada do nosso código entra no seu binário.
 
-**Um efeito colateral que vale saber:** como o motor mora do nosso lado, quando
-corrigimos um defeito nele, o seu plugin não precisa ser recompilado.
+Isso tem três consequências práticas, e todas são boas para você:
+
+**O seu compilador não importa.** A maioria das APIs de plugin obriga você a usar
+exatamente o compilador delas. O motivo é real: biblioteca C++ não atravessa
+compilador — o layout de `std::string` e de vtable muda entre MSVC e MinGW, e
+muda até entre versões do MSVC. Quando não bate, não dá erro claro: linka, roda,
+e corrompe memória na primeira string que cruzar a fronteira. Aqui a fronteira é
+uma `struct` em C puro com convenção `__cdecl`, e sobre isso todo compilador
+concorda.
+
+**Corrigimos defeitos sem você recompilar.** O motor mora do nosso lado. Quando
+consertamos algo nele, o seu plugin publicado ganha a correção sozinho.
+
+**A tabela só cresce.** Campo novo entra sempre no **fim**, e nada é removido
+nem reordenado. Isso está exercitado num servidor de verdade: um plugin
+compilado contra a v3 (tabela de 328 bytes) foi carregado sobre uma API v6
+(376 bytes), chamou uma função e o servidor seguiu de pé.
 
 ---
 
-## Visual Studio
+## Compilar
+
+### Visual Studio
 
 1. **Novo Projeto** → *Biblioteca de Vínculo Dinâmico (DLL)*
 2. **C/C++ → Geral → Diretórios de Inclusão Adicionais**: aponte para `include`
 3. **C/C++ → Geração de Código → Biblioteca de Runtime**: `/MT`, não `/MD`
 4. **Plataforma: x64**
 
-O `/MT` importa. Com `/MD`, sua DLL depende do runtime da Microsoft instalado na
-máquina — e o servidor roda sob Wine, num contêiner onde esse runtime pode não
-existir. O sintoma é `LoadLibrary` falhando com um código genérico que não
-explica nada. Com `/MT`, o runtime vai dentro da sua DLL.
+Ou, direto na linha de comando:
 
-Não há nada para linkar: sem `.lib`, sem `.a`, sem adicionar `.cpp` nosso.
+```bat
+cl /nologo /std:c++17 /O2 /EHsc /LD /MT ^
+   /I "caminho\do\sdk\include" ^
+   MeuPlugin.cpp /Fe:MeuPlugin.dll
+```
 
-## mingw-w64
+**O `/MT` importa de verdade.** Com `/MD`, a sua DLL depende do runtime da
+Microsoft estar instalado na máquina — e muitos servidores rodam sob Wine, num
+contêiner onde esse runtime pode não existir. O sintoma é `LoadLibrary` falhando
+com um código genérico que não explica nada. Com `/MT`, o runtime vai dentro da
+sua DLL e o problema não existe.
+
+Para conferir que deu certo:
+
+```bat
+dumpbin /dependents MeuPlugin.dll
+```
+
+Deve aparecer só `KERNEL32.dll`. Se aparecer `MSVCP140.dll` ou `VCRUNTIME140.dll`,
+o `/MT` não pegou.
+
+### mingw-w64
 
 ```bash
 x86_64-w64-mingw32-g++ -std=c++17 -O2 -shared \
@@ -100,6 +134,19 @@ x86_64-w64-mingw32-g++ -std=c++17 -O2 -shared \
 ```
 
 Os `-static-*` pelo mesmo motivo do `/MT`.
+
+### O que testamos a cada versão
+
+| você usa | funciona? | testado por nós |
+|---|---|---|
+| Visual Studio 2026 (`cl` 19.51) | sim | **sim** — a cada release |
+| Visual Studio 2017–2022 (v141–v143) | sim | não diretamente; a ABI C não mudou |
+| mingw-w64 (GCC 13+) | sim | **sim** — a cada build |
+| clang com alvo Windows | sim | não diretamente |
+
+Não é declaração de intenção. A cada versão nós baixamos o pacote publicado,
+compilamos o `ExemploOla` com MinGW **e** com MSVC, e subimos os dois binários no
+mesmo servidor. Se um dos dois parar de funcionar, a release não sai.
 
 ---
 
@@ -117,11 +164,64 @@ sed -i 's/ExemploOla/MeuPlugin/g' compilar.sh
 |---|---|
 | **ExemploOla** | o menor plugin que ainda prova algo: achar objeto, chamar função, escrever no log |
 | **ExemploComando** | interceptar `!comando` no chat e engolir a mensagem |
-| **ExemploVigia** | dar boas-vindas no login, contar quem está online e responder comandos no chat |
+| **ExemploVigia** | boas-vindas no login, contar quem está online, responder comandos |
 | **ExemploVip** | consultar o Permission e continuar funcionando quando ele não está instalado |
 | **ExemploAgendado** | rodar código de tempos em tempos, na thread certa |
-| **ExemploBlueprint** | interceptar execução de Blueprint — o que o hook por nome não vê. **Leia o aviso no topo do arquivo antes de copiar**: a versão anterior dele deixava uma janela em que o detour rodava sem o ponteiro original, e nessa janela toda execução de Blueprint era descartada em silêncio — como o login do Conan é feito de Blueprint, ninguém entrava no servidor |
+| **ExemploBlueprint** | interceptar execução de Blueprint — o que o hook por nome não vê. **Leia o aviso no topo do arquivo**: uma versão anterior dele deixava uma janela em que toda execução de Blueprint era descartada em silêncio, e como o login do Conan é feito de Blueprint, ninguém entrava no servidor |
 | **Permission** | o plugin completo: banco, configuração, e uma ABI que outros consomem |
+
+---
+
+## O jogo inteiro, com assinatura de verdade
+
+Além da tabela, o pacote traz o **`ConanSDK.h`**: **9.247 classes** do Conan com
+os membros e as funções que a própria reflexão do jogo declara. Não é uma lista
+de nomes — **89% das 38.340 funções têm assinatura completa**, com tipo e nome
+de cada parâmetro, conferidos contra o servidor rodando.
+
+Na prática, você escreve assim:
+
+```cpp
+#include "Conan/ConanSDK.h"
+
+void ConanPluginCarregar(const ConanApiTabela* api)
+{
+    ConanApi::UsarTabela(api);          // <- obrigatória, uma vez
+
+    cm->TeleportPlayer(1000.0f, 2000.0f, 300.0f);   // um ponto salvo
+    FVector onde = ator->K2_GetActorLocation();      // onde ele está
+    cm->CheatSpawnItem(TemplateId, quantidade);      // um item para a sua loja
+}
+```
+
+**`ConanApi::UsarTabela(api)` não é opcional.** O header não tem de onde tirar a
+tabela sozinho — ela chega no seu `ConanPluginCarregar`. Sem essa linha, toda
+chamada do SDK vira nada, em silêncio; por isso a primeira delas avisa no
+`stderr` em vez de deixar você caçar o motivo.
+
+Parâmetro de **saída** vira referência, e a API copia o valor de volta:
+
+```cpp
+FHitResult batida{};
+ator->K2_SetActorLocation(destino, false, batida, true);
+```
+
+Texto de saída vira `char*` e capacidade, já **decodificado** — nunca o ponteiro
+do jogo, que morre quando a chamada retorna:
+
+```cpp
+char esquerda[64], direita[64];
+lib->Split("conan|api", "|", esquerda, sizeof(esquerda), direita, sizeof(direita));
+```
+
+**E você não linka nada.** O SDK inteiro conversa pela tabela — é por isso que
+ele se comporta igual em MSVC, MinGW e clang. Se algum dia o seu projeto pedir
+uma `libconanapi.a`, algo está errado: não existe biblioteca nossa para linkar.
+
+Os 11% restantes saem como template genérico, e é deliberado: são tipos que
+**carregam posse de memória do jogo** (`TArray<FString>`, `TMap`, delegates
+multicast). Passá-los por valor duplicaria ponteiros, e alguém liberaria duas
+vezes. Preferimos um template sem tipo a uma assinatura que corrompe.
 
 ---
 
@@ -135,30 +235,27 @@ Conan-Api/Plugins/MeuPlugin/
    meubanco.db          <- o que você gravar nasce aqui
 ```
 
-O `PluginInfo.json` é o cartão de identidade:
+O `PluginInfo.json` é o cartão de identidade do seu plugin:
 
 ```json
 {
   "FullName":      "Meu Plugin",
   "Description":   "O que ele faz, em uma linha",
   "Version":       "1.0.0",
-  "MinApiVersion": 2,
+  "MinApiVersion": 3,
   "Dependencies":  ["Permission"]
 }
 ```
 
-`MinApiVersion` faz o carregador **recusar** seu plugin numa API velha demais,
-em vez de deixá-lo rodar e ler lixo. A tabela desta versão é a **v4** — declare
-o menor número de que você realmente precisa, não o mais alto: quem pede v4 sem
-usar nada da v4 se recusa a rodar em servidor que ainda está na v3, sem motivo.
+**`MinApiVersion`** faz o carregador **recusar** o seu plugin numa API velha
+demais, em vez de deixá-lo rodar e ler lixo. A tabela desta versão é a **v6** —
+mas declare o menor número de que você realmente precisa, não o mais alto. Quem
+pede v6 sem usar nada da v6 se recusa a rodar num servidor que ainda está na v5,
+sem motivo nenhum.
 
-Campo novo entra sempre no **fim** da tabela, e nada é removido nem reordenado.
-Isso está exercitado: um plugin compilado contra a v3 (328 bytes de tabela) foi
-carregado sobre a API v4 (344 bytes) num servidor de verdade, chamou uma função
-e o servidor seguiu de pé. Seu plugin publicado continua funcionando quando a
-tabela cresce. `Dependencies` garante que o Permission
-suba antes de você — sem isso, você perguntaria a ele antes de ele existir, e
-concluiria que não está instalado. (Isso aconteceu de verdade aqui.)
+**`Dependencies`** garante que o Permission suba antes de você. Sem isso, você
+perguntaria a ele antes de ele existir e concluiria que não está instalado.
+(Aconteceu de verdade aqui, com um plugin nosso.)
 
 **Guarde tudo pela API**, nunca por caminho relativo:
 
@@ -168,6 +265,55 @@ const char* banco = g_api->CaminhoDados("MeuPlugin", "meubanco.db");
 
 Caminho relativo é resolvido a partir do diretório do **servidor**, não da sua
 pasta. Um plugin nosso já gravou 9 MB por boot no lugar errado assim.
+
+---
+
+## Se o seu plugin usa offset cru, declare
+
+Esta é a diferença entre um plugin que sobrevive a uma atualização do Conan e um
+que passa a ler memória errada em silêncio:
+
+```json
+{ "BuildDoJogo": 24784646, "UsaOffsetsCrus": true }
+```
+
+Quando você declara e a build do jogo muda, **o carregador recusa o seu plugin**
+e diz ao dono do servidor para pedir a versão nova a você. Sem a declaração, ele
+carrega e lê o campo vizinho — sem erro, sem log, sem pista.
+
+**Como não precisar disso:** use `api->OffsetDoMembro(obj, "NomeDoCampo")` em vez
+do número. Ele resolve pela reflexão, na build que estiver rodando, e o seu
+plugin atravessa a atualização sem você fazer nada.
+
+---
+
+## Responder no primeiro segundo
+
+O servidor aceita jogador **antes** de o mundo terminar de montar. Nessa janela a
+reflexão ainda não existe, então um plugin ligado só depois dela deixa sem
+resposta quem digitou um comando cedo.
+
+Para isso existe um segundo ponto de entrada, opcional:
+
+```cpp
+extern "C" __declspec(dllexport)
+void ConanPluginRegistrar(const ConanApiTabela* api)   // ANTES do mundo
+{
+    ConanApi::UsarTabela(api);
+    g_id = api->HookProcessEvent("ServerSendChatMessage", AoFalar, nullptr, 100);
+}
+```
+
+`HookProcessEvent` chamado aqui **entra numa fila** e devolve um id válido na
+hora. A API arma o hook no instante em que o mundo monta — antes de qualquer
+plugin ser ligado.
+
+**O que você não pode fazer aqui:** tocar em objeto do jogo. Não há mundo, e
+`FindClass`/`FindObjects` devolvem nada. Se você precisa do mundo, o lugar é o
+`ConanPluginCarregar`.
+
+Você não precisa exportar o `Registrar`. Sem ele tudo funciona como antes — ele
+só encurta a janela.
 
 ---
 
@@ -185,31 +331,36 @@ if (ConanPermIdDoController(controller, id, sizeof(id)) > 0)
 ```
 
 Se o Permission não estiver instalado, as funções devolvem o valor `se_ausente`
-que você passou e o seu plugin continua rodando. **Pergunte no momento do uso,
-não no carregamento** — carregar é cedo demais.
+que você passou e o seu plugin continua rodando.
+
+**Pergunte no momento do uso, não no carregamento.** E escolha o `se_ausente`
+pelo custo do erro: para um kit de VIP, `0` (negar por trinta segundos incomoda;
+dar de graça a todo mundo durante uma queda de banco, não desfaz).
 
 ---
 
 ## O que a API não deixa você fazer, e por quê
 
-**Recusar hook.** `HookFuncao` recusa cerca de 32% dos endereços, com o motivo
-em `TextoRecusa`. Isso não é falha: é a API se negando a instalar um desvio que
-um dia executaria meia instrução, corrompendo memória horas depois, num lugar
-sem relação com a causa.
+**Hookar qualquer endereço.** `HookFuncao` recusa cerca de 32% deles, com o
+motivo em `TextoRecusa`. Isso não é falha: é a API se negando a instalar um
+desvio que um dia executaria meia instrução, corrompendo memória horas depois,
+num lugar sem relação com a causa.
 
 **Passar tamanho errado.** `ChamarFuncao` confere o tamanho de cada argumento
 contra o parâmetro real e recusa quando não bate. Se você passar um `float` onde
 o jogo espera `double`, ela para e diz. Medimos: **293 funções** desta build
 corrompem a pilha por esse caminho, e o sintoma aparece longe da causa.
 
-**Montar você mesmo uma string do jogo.** O jogo destrói o bloco de parâmetros
-ao retornar e chama o alocador **dele** sobre o ponteiro que estiver lá. Se for
+**Montar você mesmo uma string do jogo.** O jogo destrói o bloco de parâmetros ao
+retornar e chama o alocador **dele** sobre o ponteiro que estiver lá. Se for
 memória sua, o servidor cai — testado, não é teoria.
 
 Você não precisa fazer isso: **escreva texto normal e a API monta**.
 
 ```cpp
-pc->ClientHUDShowNotification("Bem-vindo ao servidor!", true, true);
+g_api->MensagemParaTodos("O servidor reinicia em 5 minutos.");
+g_api->MensagemParaJogador("NomeDoJogador", "Kit entregue. Volte em 24h.");
+g_api->MensagemNaTela(playerController, "Bem-vindo!", 8.0f);
 ```
 
 Por baixo, a API pede a `FString` (ou o `FText`) ao **próprio jogo** e devolve o
@@ -218,63 +369,38 @@ quem libera.
 
 ---
 
-## O jogo inteiro, com assinatura de verdade
+## Quando não funciona: onde olhar
 
-O `ConanSDK.h` traz **8.287 classes** do Conan com os membros e as funções que a
-reflexão do jogo declara. Não é lista de nomes: **85% das 36.757 funções têm
-assinatura completa** — tipo e nome de cada parâmetro, conferidos contra o
-próprio servidor rodando.
+Dois arquivos respondem quase tudo, em `Conan-Api/Logs/`:
 
-```cpp
-#include "Conan/ConanSDK.h"
+| arquivo | o que ele conta |
+|---|---|
+| `ConanLoader.log` | quais plugins o carregador **viu**, quais **recusou** e por quê |
+| `ConanApi.log` | o que os plugins escreveram com `Log()`, e os avisos do motor |
 
-void ConanPluginCarregar(const ConanApiTabela* api)
-{
-    ConanApi::UsarTabela(api);          // <- obrigatória, uma vez
+**A DLL não abre.** Quase sempre é arquitetura (compilou x86 em vez de x64) ou
+`/MD` em vez de `/MT`. O erro `193` do Windows significa, na prática, 32 bits.
 
-    cm->TeleportPlayer(1000.0f, 2000.0f, 300.0f);   // ponto de salvamento
-    FVector onde = ator->K2_GetActorLocation();      // onde ele está
-    cm->CheatSpawnItem(TemplateId, quantidade);      // item para a loja
-}
+**Abriu, mas nada acontece.** Confira se o nome da pasta e o da DLL batem, e se
+você exportou `ConanPluginCarregar`. No MSVC, sem `extern "C"` o nome sai
+decorado e o carregador não acha:
+
+```bat
+dumpbin /exports MeuPlugin.dll | findstr ConanPlugin
 ```
 
-**`ConanApi::UsarTabela(api)` não é opcional.** O header não tem de onde tirar a
-tabela sozinho — ela chega no seu `ConanPluginCarregar`. Sem essa linha, toda
-chamada do SDK vira nada, em silêncio; por isso a primeira delas avisa no
-`stderr` em vez de deixar você caçar o motivo.
+Deve aparecer `ConanPluginCarregar`, não `?ConanPluginCarregar@@YAXPEBU...`.
 
-Parâmetro de **saída** vira referência, e a API copia o valor de volta:
+**As chamadas do `ConanSDK.h` não fazem nada.** Faltou `ConanApi::UsarTabela(api)`.
 
-```cpp
-FHitResult batida{};
-ator->K2_SetActorLocation(destino, false, batida, true);
-```
+**A função responde `false` e você não sabe se rodou.** Use
+`api->UltimaChamadaExecutou()`. O jogo filtra chamadas em objeto-modelo e ator
+não inicializado, e nesses casos o retorno vem de um bloco zerado — sem esse
+sinal, "a função disse não" e "a função não rodou" viram o mesmo `false`.
 
-Texto de saída vira `char*` e capacidade, **decodificado** — nunca o ponteiro do
-jogo, que morre quando a chamada retorna:
-
-```cpp
-char esquerda[64], direita[64];
-lib->Split("conan|api", "|", esquerda, sizeof(esquerda), direita, sizeof(direita));
-```
-
-Lista de saída vira ponteiro, capacidade e contagem, com os **elementos**
-copiados:
-
-```cpp
-AActor* achados[32]; int quantos = 0;
-lib->AlgumaBuscaDeAtores(..., achados, 32, quantos);
-```
-
-**Você não linka nada.** O SDK inteiro conversa pela tabela de funções — é por
-isso que ele funciona igual em MSVC, MinGW e clang. Se algum dia o seu projeto
-pedir uma `libconanapi.a`, algo está errado: não existe biblioteca nossa para
-você linkar.
-
-Os 15% restantes saem como template genérico, e isso é deliberado: são tipos que
-**carregam posse de memória do jogo** (`TArray<FString>`, `TMap`, delegates
-multicast). Passá-los por valor duplicaria ponteiros, e alguém liberaria duas
-vezes. Preferimos template sem tipo a assinatura que corrompe.
+**Escreveu num campo e o cliente não vê.** O campo é replicado; são 1.222 dos
+36.210 desta build. Pergunte antes com `api->EhReplicado(...)` e prefira chamar a
+função do jogo, que percorre o caminho que já replica.
 
 ---
 
@@ -282,30 +408,39 @@ vezes. Preferimos template sem tipo a assinatura que corrompe.
 
 ## Publicou um plugin?
 
-Antes de publicar, confira:
+Abra uma *issue* aqui contando. A ideia é ter uma lista no README para quem
+administra servidor encontrar o que existe.
 
-- [ ] compila em **x64**, com `/MT` (MSVC) ou `-static-*` (MinGW)
+Antes de publicar, uma lista curta:
+
+- [ ] compila em x64, com `/MT` (MSVC) ou `-static-*` (MinGW)
 - [ ] a pasta tem o nome do plugin, e a DLL também
 - [ ] tudo que ele grava passa por `CaminhoDados("SeuPlugin", ...)`
 - [ ] confere `api->tamanho` antes de usar a tabela
-- [ ] `DllMain` não faz nada (ali o Windows segura uma trava global)
-- [ ] tem `PluginInfo.json` com versão e `MinApiVersion`
-- [ ] **rodou num servidor de verdade** — compilar não é funcionar
+- [ ] o `DllMain` não faz nada
+- [ ] se usa o Permission, consulta no uso e degrada quando ele falta
+- [ ] rodou num servidor de verdade — teste não prova o caminho real
 
 ---
 
 ## Para rodar um servidor
 
-É outro repositório: **[Conan-Api](../../../Conan-Api)** — o carregador, os
-plugins prontos e como instalar.
+É outro repositório: **[Conan-Api](../../../Conan-Api)**. Lá estão o carregador,
+o pacote pronto e o guia de instalação.
+
+São separados de propósito: quem administra um servidor não precisa de
+compilador para nada, e quem escreve plugin não precisa dos binários do servidor.
 
 ---
 
 ## Créditos
 
-*Conan Exiles* é da **Funcom**. As imagens são material de divulgação oficial do
-Steam. Este projeto é independente e não tem vínculo com a Funcom nem com a
-Inflexion Games.
+*Conan Exiles* é da **Funcom**. As imagens deste repositório são material de
+divulgação oficial, do Steam. Este projeto não tem vínculo com a Funcom nem com
+a Inflexion Games.
+
+Esta API é trabalho independente, feito por engenharia reversa do servidor
+dedicado, sem SDK oficial e sem símbolos de depuração.
 
 <p align="center">
   <a href="README.md"><img src=".github/imagens/bandeiras/br.png" alt="Portugues" height="13">&nbsp;<b>Portugu&ecirc;s</b></a>
