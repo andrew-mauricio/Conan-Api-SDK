@@ -232,6 +232,17 @@ typedef struct ConanApiTabela
     //
     // Tocar objeto do jogo de outra thread derruba o servidor. Se o seu plugin
     // tem thread própria, agende por aqui.
+    // A tarefa roda na THREAD DO JOGO — e agora isso é garantido, não provável.
+    //
+    // Como: o motor conta as chamadas de ProcessEvent por thread e elege a
+    // dominante (medido neste servidor: 19.981 de 20.000, ou 99,9%). Antes a
+    // tarefa rodava na thread que por acaso passasse pelo funil; dava certo
+    // quase sempre, pela mesma dominância — mas "quase sempre" não é garantia,
+    // e tocar no mundo pela thread errada corrompe estado devagar e sem erro.
+    //
+    // Enquanto a eleição não conclui (segundos), NENHUMA tarefa roda, e o log
+    // diz isso uma vez. Atrasar a primeira execução custa segundos; executá-la
+    // na thread errada custa o servidor de outra pessoa.
     uint32_t (*AgendarNaThreadDoJogo)(ConanFnTarefa tarefa, uint32_t segundos,
                                       void* contexto, int repetir);
     int      (*CancelarAgendamento)(uint32_t id);

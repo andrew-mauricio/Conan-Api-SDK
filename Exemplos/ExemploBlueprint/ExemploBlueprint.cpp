@@ -91,15 +91,38 @@ void ConanPluginCarregar(const ConanApiTabela* api)
     g_api->Log("=== ExemploBlueprint ===");
     if (!g_api->Pronta()) { g_api->Log("  reflexao indisponivel"); return; }
 
-    void* orig = nullptr;
+    // ── PASSAR A PRÓPRIA GLOBAL, E NÃO UMA VARIÁVEL LOCAL ───────────────────
+    //
+    // A versão anterior fazia assim, e está ERRADO:
+    //
+    //     void* orig = nullptr;
+    //     HookExecucaoDeBlueprint(&MeuDetour, &orig);   // patch já ativo aqui
+    //     g_original = orig;                            // só agora o detour vê
+    //
+    // O motor preenche o ponteiro ANTES de escrever os 5 bytes do patch (ver
+    // ConanHooks.cpp: `*original = tramp;` vem antes de EscreverAtomico5) — ou
+    // seja, ele faz a parte dele certo. Mas quem preenchia a GLOBAL que o detour
+    // lê era a linha seguinte do plugin, DEPOIS de a função voltar. Entre o
+    // patch e essa linha existe uma janela em que MeuDetour roda com
+    // g_original == nullptr, e o `if (g_original)` abaixo — que é a atitude
+    // certa — descarta a chamada em SILÊNCIO. Cada execução de Blueprint
+    // descartada é código do jogo que simplesmente não rodou.
+    //
+    // Passando o endereço da própria global, o motor escreve nela antes do
+    // patch existir. A janela deixa de ter onde acontecer.
+    //
+    // ISTO IMPORTA MAIS AQUI DO QUE EM QUALQUER OUTRO EXEMPLO: este arquivo é o
+    // que o dev copia quando vai hookar alguma coisa. O padrão errado se
+    // multiplicaria por toda plugin da comunidade.
     const ConanRecusa r = g_api->HookExecucaoDeBlueprint(
-        reinterpret_cast<void*>(&MeuDetour), &orig);
+        reinterpret_cast<void*>(&MeuDetour),
+        reinterpret_cast<void**>(&g_original));
     if (r != CONAN_OK)
     {
         g_api->Log("  ✗ nao hookei: %s", g_api->TextoRecusa(r));
         return;
     }
-    g_original = reinterpret_cast<FnInterno>(orig);
+    void* const orig = reinterpret_cast<void*>(g_original);
     g_api->Log("  ✅ hook instalado em ProcessInternal. trampolim=%p", orig);
     g_api->AgendarNaThreadDoJogo(Relatar, 30, nullptr, 1);
     g_api->Log("  relatorio a cada 30 s. Se o numero SUBIR, o hook esta pegando");

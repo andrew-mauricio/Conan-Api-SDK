@@ -64,6 +64,7 @@
 #include "Conan/ConanPermission.h"     // só o header; nada para linkar
 
 #include <windows.h>
+#include <cstdio>
 #include <cstring>
 
 // A tabela que o carregador entrega. Tudo o que este plugin sabe fazer com o
@@ -132,18 +133,52 @@ static void AtenderPedidoDeVip(void* controller, const char* usuario)
     g_api->Log("[vip] id=%s  kit.diario=%d  teleporte=%d  vence=%lld  grupos=[%s]",
                id, (int)vip, (int)tele, (long long)vence, grupos);
 
-    // Um plugin real daria o kit aqui. Este só registra, porque o objetivo é
-    // provar o caminho — e porque MANDAR TEXTO DE VOLTA AO JOGO DERRUBA O
-    // SERVIDOR nesta build: construir uma FString nossa e entregá-la ao jogo
-    // faz o ProcessEvent destruir o bloco de parâmetros com o alocador DELE
-    // sobre memória NOSSA. Está medido, o processo morre na chamada. Enquanto
-    // não houver ferramenta na tabela para isso, a resposta ao jogador é o log
-    // do dono do servidor.
+    // Um plugin real daria o kit aqui; este registra e AVISA o jogador.
+    // ── AGORA ELE RESPONDE, E ISSO MUDOU EM 19/08/2026 ──────────────────────
+    //
+    // O comentário acima descrevia a verdade de ontem: entregar texto ao jogo
+    // derrubava o servidor, porque a FString era NOSSA e o ProcessEvent a
+    // destruía com o alocador DELE. Por isso este plugin fazia todo o trabalho
+    // — hook de chat, identificação, consulta ao banco, decisão — e ficava
+    // calado. Do lado do jogador, indistinguível de plugin quebrado.
+    //
+    // O que mudou: a tabela v3 trouxe MensagemNaTela, e ela pede o FText ao
+    // PRÓPRIO jogo (KismetTextLibrary::Conv_StringToText). Nenhuma memória
+    // nossa atravessa a fronteira, o I-2 continua de pé, e o canal está PROVADO
+    // na tela de um jogador de verdade — 19/08/2026, "rodada 3/8" visível no
+    // cliente do Andrew.
+    //
+    // Um plugin que decide certo e não conta a ninguém não resolveu o problema
+    // do dono do servidor: ele só o moveu para dentro de um arquivo de log.
+    char aviso[256];
     if (vip == 1)
+    {
         g_api->Log("[vip] -> %s TEM direito ao kit diario. (aqui entraria a "
                    "entrega do kit)", usuario);
+        std::snprintf(aviso, sizeof(aviso),
+                      "VIP confirmado: voce tem direito ao kit diario.");
+    }
     else
+    {
         g_api->Log("[vip] -> %s nao tem vip.kit.diario", usuario);
+        std::snprintf(aviso, sizeof(aviso),
+                      "Voce ainda nao tem VIP. Fale com o dono do servidor.");
+    }
+
+    // Se a resposta não sair, DIGO. Silêncio aqui traria de volta exatamente o
+    // defeito que este bloco existe para consertar.
+    if (controller)
+    {
+        const int r = g_api->MensagemNaTela(controller, aviso, 8.0f);
+        if (!r) g_api->Log("[vip] AVISO: nao consegui responder na tela de %s "
+                           "(a decisao acima valeu, mas ele nao foi informado)",
+                           usuario);
+    }
+    else
+    {
+        g_api->Log("[vip] AVISO: sem controller nesta chamada; %s nao foi "
+                   "informado da decisao.", usuario);
+    }
 }
 
 // ── o hook de chat ──────────────────────────────────────────────────────────

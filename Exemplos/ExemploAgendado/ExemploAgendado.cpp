@@ -28,7 +28,6 @@
 //
 // O que prova de verdade: guardar o id da thread que executa um hook (essa é a
 // do jogo, por definição) e comparar com o id de dentro da tarefa agendada.
-static DWORD g_threadDoJogo = 0;
 
 // O ponteiro da tabela é guardado em estático porque a tarefa agendada roda
 // muito depois do Carregar, sem receber a tabela de volta — o contexto que o
@@ -37,6 +36,41 @@ static const ConanApiTabela* g_api = nullptr;
 
 static int   g_disparos = 0;
 static DWORD g_t0 = 0;
+
+// ── A PROVA DE THREAD, DE VERDADE ───────────────────────────────────────────
+//
+// A versão original afirmava "rodei na thread do jogo" porque Subtract(10,3)
+// deu 7. Isso não prova NADA sobre thread: a conta dá 7 em qualquer uma. Era
+// afirmação com cara de prova — pior que nenhuma, porque o dev copia o exemplo
+// e acha que está verificando algo.
+//
+// O que prova: capturar o id da thread dentro de um HOOK. Hook de ProcessEvent
+// roda, por definição, na thread que executa o jogo. Se o id de dentro da
+// tarefa agendada for o MESMO, a promessa de AgendarNaThreadDoJogo está
+// cumprida; se for outro, está quebrada — e o log precisa gritar, porque um
+// plugin que toca no mundo fora da thread do jogo corrompe estado devagar.
+static volatile DWORD g_threadDoJogo = 0;
+static volatile DWORD g_candidata = 0;
+static volatile long  g_votos = 0;
+
+extern "C" ConanAcao CapturarThread(ConanChamada* c)
+{
+    (void)c;
+    // A THREAD DOMINANTE, NAO A PRIMEIRA — e esta distincao me custou uma
+    // conclusao errada em 19/08/2026. Gravar o primeiro evento que passa aqui
+    // parece razoavel e nao e': ProcessEvent e' chamado de VARIAS threads, e o
+    // primeiro pode vir de qualquer uma. Com isso eu "provei" que a API estava
+    // quebrada quando quem estava errado era o meu instrumento.
+    //
+    // Conto e fico com a que mais aparece: a do game loop domina por ordens de
+    // grandeza (medido: 99,9%).
+    const DWORD eu = GetCurrentThreadId();
+    if (eu == g_candidata) { ++g_votos; }
+    else if (g_votos == 0) { g_candidata = eu; g_votos = 1; }
+    else { --g_votos; }
+    if (g_votos > 5000) g_threadDoJogo = g_candidata;
+    return CONAN_CONTINUAR;
+}
 
 static void Tique(void* /*contexto*/)
 {
@@ -76,6 +110,21 @@ static void Tique(void* /*contexto*/)
                r == 7 ? "<<< a chamada por reflexao funcionou" : "<<< ERRADO",
                (unsigned long long)total);
 
+    // A prova que o nome promete: MESMA thread do hook?
+    const DWORD minha = GetCurrentThreadId();
+    if (!g_threadDoJogo)
+        g_api->Log("[agendado] thread: ainda nao capturei a do jogo (nenhum evento "
+                   "passou pelo hook). Sem base de comparacao, NAO afirmo nada.");
+    else if (minha == g_threadDoJogo)
+        g_api->Log("[agendado] thread %lu == a do jogo %lu  <<< PROVADO: a tarefa "
+                   "roda na thread do jogo", (unsigned long)minha,
+                   (unsigned long)g_threadDoJogo);
+    else
+        g_api->Log("[agendado] ATENCAO: thread %lu != a do jogo %lu. A promessa de "
+                   "AgendarNaThreadDoJogo esta QUEBRADA — tocar no mundo daqui "
+                   "corrompe estado devagar e sem erro.",
+                   (unsigned long)minha, (unsigned long)g_threadDoJogo);
+
     if (g_disparos >= 4)
         g_api->Log("[agendado] 4 disparos com resposta certa: o agendador funciona.");
 }
@@ -95,6 +144,11 @@ void ConanPluginCarregar(const ConanApiTabela* api)
     g_api->Log("=== ExemploAgendado ===");
     if (!g_api->Pronta()) { g_api->Log("  reflexao indisponivel"); return; }
 
-    const uint32_t id = g_api->AgendarNaThreadDoJogo(Tique, 10, nullptr, 1);
+    const uint32_t id =
+ // Um hook em TUDO, só para capturar o id da thread do jogo. É barato
+ // (devolve CONTINUAR na hora) e é a única forma honesta de ter com o
+ // que comparar: sem base de comparação, a prova abaixo não prova.
+ g_api->HookProcessEventTudo(CapturarThread, 100);
+ g_api->AgendarNaThreadDoJogo(Tique, 10, nullptr, 1);
     g_api->Log("  tarefa a cada 10 s -> id %u %s", id, id ? "" : "(NAO agendou)");
 }
