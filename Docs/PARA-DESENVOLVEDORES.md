@@ -246,6 +246,78 @@ não quebra.
 conclui, de boa-fé, que ninguém o instalou. (Aconteceu aqui: o `ExemploVip`
 anunciava "Permission não está instalado" num servidor onde ele estava.)
 
+### O Permission pode estar em SQLite **ou em MySQL**, e você não tem como saber
+
+O dono do servidor escolhe onde os dados moram, com uma linha no `config.json`
+dele (`"Database": "sqlite"` ou `"mysql"`). Isso é decisão dele, não sua, e o
+seu plugin **não deve ter opinião nem código a respeito**: a ABI é a mesma nos
+dois casos, com os mesmos nomes, os mesmos tipos e a mesma semântica.
+
+O que isso te obriga a fazer é **uma coisa só**, e é a que costuma faltar:
+
+> **"Ausente" não é só "não instalado". É um estado que vai e volta enquanto o
+> servidor roda.**
+
+Com SQLite, se o Permission carregou, ele responde — o arquivo é local e não
+cai. Com **MySQL**, o banco fica em outra máquina, e a rede do dono não é
+problema seu nem dele: ela cai. Quando cai, o `ConanPermissionObterApi`
+devolve `nullptr` — **ausente** — e os auxiliares do header devolvem o
+`se_ausente` que você passou. Quando a conexão volta (o Permission tenta
+sozinho, em segundo plano), a chamada seguinte volta a responder normalmente.
+
+Ou seja: o mesmo jogador pode responder `1` numa hora, `se_ausente` na seguinte
+e `1` de novo depois — **sem nada de errado com o seu plugin**.
+
+```cpp
+// CERTO: decide na hora, e o valor de ausência é uma escolha SUA e consciente
+if (ConanPermTem(id, "meuplugin.kit.diario", /*se_ausente=*/0) == 1)
+    DarKit(controller);
+
+// ERRADO: guarda a resposta para sempre. Se calhar de perguntar durante uma
+// queda do MySQL, este jogador fica sem VIP até o servidor reiniciar.
+if (!ja_perguntei) { ehVip = ConanPermTem(id, "vip.kit", 0); ja_perguntei = true; }
+```
+
+**Escolha o `se_ausente` pelo custo do erro, não por reflexo:**
+
+| o que a permissão libera | `se_ausente` sensato | por quê |
+|---|---|---|
+| um kit, um teleporte, um bônus de VIP | `0` (nega) | negar por 30 s incomoda; dar de graça a todo mundo durante uma queda, não desfaz |
+| um comando destrutivo de admin (`!wipe`, `!ban`) | `0` (nega) | sempre |
+| algo que só *esconde* informação cosmética | `1` (libera) | o custo de errar é zero |
+
+Nunca trate `-1` como "negado". Quem chama `a->tem()` direto na tabela recebe
+`-1` para "não sei"; os auxiliares do header já traduzem isso para o seu
+`se_ausente`, e é por isso que eles existem. Tratar `-1` como `0` na mão tira o
+VIP de quem pagou por ele, justamente no minuto em que o banco do dono está com
+problema.
+
+### O que você **não** pode fazer
+
+**Não abra o `permission.db` por conta própria.** É tentador — é um SQLite ali
+do lado, e nada te impede tecnicamente (não há fronteira entre plugins; veja
+`_fronteira` no `config.json` do Permission). Mas:
+
+1. **o arquivo pode não existir.** Se o dono está no MySQL, não há `.db` nenhum,
+   e o seu plugin passa a funcionar só na metade dos servidores;
+2. **o esquema é interno e muda sem aviso.** A ABI é o contrato; as tabelas não;
+3. **você não veria o cache.** O Permission responde a partir de um instantâneo
+   publicado em memória, e escreve pela linha de trabalho dele. Ler o arquivo
+   por fora te dá uma foto desencontrada da que todo mundo está usando.
+
+**Não guarde nada seu dentro do banco do Permission**, nos dois meios. Use
+`g_api->CaminhoDados("SeuPlugin", "seubanco.db")` e tenha o seu.
+
+**Não chame a ABI esperando que ela vá à rede.** Ela não vai: consulta lê o
+instantâneo em memória, é barata e pode ser chamada do laço do jogo. Quem fala
+com o MySQL é a linha de trabalho do Permission, nunca a sua nem a do jogo — foi
+assim que se garantiu que um banco fora do ar não vira jogador desconectado. Se
+algum dia uma consulta sua parecer lenta, o problema não é o banco do dono.
+
+**Se você distribui um plugin que usa o Permission**, diga no seu LEIA-ME que
+ele funciona com os dois — e teste com o Permission **ausente** pelo menos uma
+vez. É o caminho que ninguém exercita e é o que roda no pior dia do dono.
+
 ---
 
 ## O contrato

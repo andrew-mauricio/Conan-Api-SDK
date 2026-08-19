@@ -470,6 +470,14 @@ namespace Perm
         int         m_esperaSegundos     = 0;
         int         m_falhasReconexao    = 0;   // 2 seguidas => refaz do config
 
+        // O último estado que a thread escritora ANUNCIOU no log. Só ela toca,
+        // então não precisa ser atômico — e é por isso que ele existe separado
+        // de m_bancoServe: aquele é o estado publicado para o laço do jogo e
+        // pode ser derrubado de dentro de uma tarefa que falhou; este é o que
+        // decide se a linha "a conexao caiu" já foi escrita. Misturar os dois
+        // fazia a queda descoberta no meio de uma tarefa passar em silêncio.
+        bool        m_estavaServindo    = false;
+
         int64_t     m_ultimoAvisoConexao = 0;
         // Contadores desde o último aviso. Existem para o aviso periódico dizer
         // QUANTO se perdeu, em vez de repetir "o banco esta fora" sem tamanho —

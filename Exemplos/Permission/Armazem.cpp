@@ -191,6 +191,11 @@ namespace
     constexpr int ESPERA_PRIMEIRA = 5;
     constexpr int ESPERA_TETO     = 300;
 
+    // Quanto Abrir() segura a thread de carga do plugin esperando a primeira
+    // abertura. O porquê do número — e os 120,5 s medidos que o motivaram —
+    // está no comentário de Armazem::Abrir, em Armazem.h.
+    constexpr int ARRANQUE_ESPERA_MS = 15000;
+
     // De quanto em quanto tempo o log repete que o banco está fora. Repetir é
     // obrigatório e não é ruído: senha errada não se conserta sozinha, e o dono
     // lê o log HORAS depois, quando o jogador reclama — a essa altura a linha
@@ -480,26 +485,11 @@ bool Armazem::Abrir(const char* caminhoDb, const char* caminhoJson, FnLog log)
         return true;
     }
 
-    if (!Pronto())
-    {
-        // Estas são as linhas que o dono do servidor vai ler e colar num fórum.
-        // Elas dizem, nesta ordem: o que NÃO está acontecendo, por que não
-        // inventei outro lugar para gravar, e o que vai acontecer sozinho.
-        Registrar("[permission] ############################################################");
-        Registrar("[permission] # O BANCO NAO ABRIU — o Permission esta AUSENTE.");
-        Registrar("[permission] # O motivo esta na linha logo acima desta moldura.");
-        Registrar("[permission] # Nenhuma permissao sera respondida: para os outros plugins");
-        Registrar("[permission] # e como se o Permission nao estivesse instalado, e cada um");
-        Registrar("[permission] # usa o padrao que ELE escolheu (se_ausente).");
-        Registrar("[permission] # NAO gravei em outro lugar. Cair para um banco local seria");
-        Registrar("[permission] # criar dois lugares com VIPs diferentes e nenhum jeito de");
-        Registrar("[permission] # juntar os dois depois.");
-        Registrar("[permission] # Vou tentar de novo sozinho, com espera crescente (5 s, 10 s,");
-        Registrar("[permission] # 20 s ... ate 5 min), RELENDO o config.json a cada tentativa.");
-        Registrar("[permission] # Corrija o que a linha acima aponta e o Permission entra");
-        Registrar("[permission] # sozinho — sem reiniciar o servidor de jogo.");
-        Registrar("[permission] ############################################################");
-    }
+    // O aviso em moldura do banco que não abriu NÃO sai daqui: sai de
+    // CuidarDaConexao, na thread que descobriu a falha. Se saísse daqui, um
+    // banco que demora mais que ARRANQUE_ESPERA_MS para falhar (DNS lento, por
+    // exemplo) falharia sem nunca imprimir o aviso — e a mensagem que o dono
+    // não encontra é a mensagem que não existe.
     return true;
 }
 
@@ -1537,6 +1527,12 @@ bool Armazem::ExecutarTarefa(const Tarefa& t, bool& mexeu)
 // ============================================================================
 void Armazem::CuidarDaConexao()
 {
+    // Desligando: não se começa abertura nenhuma. Sem isto, um Fechar() pedido
+    // durante o arranque esperaria a abertura inteira — 120 s medidos contra um
+    // MySQL a 2 s por comando. (A abertura JÁ EM CURSO é cortada por outro
+    // caminho: Fechar chama IBanco::Interromper.)
+    if (!m_rodando.load(std::memory_order_acquire)) return;
+
     const bool temBanco = (m_banco != nullptr);
     const bool vivo     = temBanco && m_banco->Vivo();
 
@@ -1548,8 +1544,17 @@ void Armazem::CuidarDaConexao()
     // Acabou de cair: registra na hora, uma vez, e zera a espera para a
     // primeira tentativa ser rápida (um blip de 3 s tem de se resolver em 5 s,
     // não em 5 minutos).
-    if (vivo == false && m_bancoServe.exchange(false, std::memory_order_acq_rel))
+    //
+    // Quem decide se a linha já foi escrita é m_estavaServindo, e NÃO
+    // m_bancoServe: a queda quase sempre é descoberta DENTRO de uma tarefa que
+    // falhou, e essa tarefa já derrubou m_bancoServe para o laço do jogo parar
+    // de aceitar escrita. Usando m_bancoServe aqui, o caso comum — o único que
+    // acontece de verdade — passava em silêncio, e o dono só via a mensagem
+    // periódica cinco minutos depois, escrita como se ele já soubesse.
+    if (!vivo && m_estavaServindo)
     {
+        m_estavaServindo = false;
+        m_bancoServe.store(false, std::memory_order_release);
         Registrar("[permission] a conexao com o banco (%s) caiu: %s",
                   temBanco ? m_banco->Nome() : "?", temBanco ? m_banco->Erro() : "");
         Registrar("[permission] as CONSULTAS de permissao CONTINUAM sendo respondidas, "
@@ -1616,23 +1621,59 @@ void Armazem::CuidarDaConexao()
         m_proximaTentativa = 0;
         m_falhasReconexao  = 0;
         m_ultimoAvisoConexao = 0;
+        m_estavaServindo   = true;
         m_bancoServe.store(true, std::memory_order_release);
         uint64_t descartadas = 0;
         { std::lock_guard<std::mutex> g(m_mtxFila);
           descartadas = m_descartadasDesdeAviso; m_descartadasDesdeAviso = 0; }
-        Registrar("[permission] BANCO DE VOLTA (%s). O Permission esta respondendo "
-                  "normalmente de novo.", m_banco->Nome());
-        if (m_recusadasDesdeAviso || descartadas)
-            Registrar("[permission] enquanto esteve fora: %llu comando(s) recusado(s) e "
-                      "%llu descartado(s) por fila cheia. Eles NAO foram gravados — "
-                      "refaca o que ainda fizer sentido.",
-                      static_cast<unsigned long long>(m_recusadasDesdeAviso),
-                      static_cast<unsigned long long>(descartadas));
+
+        // "DE VOLTA" só se ele já tinha ido embora. Na primeira abertura de
+        // todas isto é o arranque normal, e anunciar uma volta que não houve
+        // faria o dono procurar uma queda que nunca aconteceu — o mesmo tipo
+        // de mensagem enganosa que esta tarefa existe para tirar do caminho.
+        if (m_arranqueFeito.load(std::memory_order_acquire))
+        {
+            Registrar("[permission] BANCO DE VOLTA (%s). O Permission esta respondendo "
+                      "normalmente de novo.", m_banco->Nome());
+            if (m_recusadasDesdeAviso || descartadas)
+                Registrar("[permission] enquanto esteve fora: %llu comando(s) recusado(s) e "
+                          "%llu descartado(s) por fila cheia. Eles NAO foram gravados — "
+                          "refaca o que ainda fizer sentido.",
+                          static_cast<unsigned long long>(m_recusadasDesdeAviso),
+                          static_cast<unsigned long long>(descartadas));
+        }
         m_recusadasDesdeAviso = 0;
         return;
     }
 
     m_bancoServe.store(false, std::memory_order_release);
+
+    // ── a PRIMEIRA falha ganha o aviso em moldura ───────────────────────────
+    //
+    // `!m_arranqueFeito` é exatamente "esta é a primeira tentativa de todas" —
+    // quem marca essa bandeira é Trabalhar(), logo depois da primeira chamada
+    // desta função. São as linhas que o dono do servidor vai ler e colar num
+    // fórum, e elas dizem, nesta ordem: o que NÃO está acontecendo, por que
+    // não inventei outro lugar para gravar, e o que vai acontecer sozinho.
+    if (!m_arranqueFeito.load(std::memory_order_acquire))
+    {
+        Registrar("[permission] ############################################################");
+        Registrar("[permission] # O BANCO NAO ABRIU — o Permission esta AUSENTE.");
+        Registrar("[permission] # O motivo esta na linha logo acima desta moldura.");
+        Registrar("[permission] # Nenhuma permissao sera respondida: para os outros plugins");
+        Registrar("[permission] # e como se o Permission nao estivesse instalado, e cada um");
+        Registrar("[permission] # usa o padrao que ELE escolheu (se_ausente).");
+        Registrar("[permission] # NAO gravei em outro lugar. Cair para um banco local seria");
+        Registrar("[permission] # criar dois lugares com VIPs diferentes e nenhum jeito de");
+        Registrar("[permission] # juntar os dois depois.");
+        Registrar("[permission] # Vou tentar de novo sozinho, com espera crescente (5 s, 10 s,");
+        Registrar("[permission] # 20 s ... ate 5 min), RELENDO o config.json a cada tentativa.");
+        Registrar("[permission] # Corrija o que a linha acima aponta e o Permission entra");
+        Registrar("[permission] # sozinho — sem reiniciar o servidor de jogo.");
+        Registrar("[permission] ############################################################");
+        m_ultimoAvisoConexao = agora;      // o periódico começa a contar daqui
+        return;
+    }
 
     // ── aviso periódico ─────────────────────────────────────────────────────
     //
@@ -1667,6 +1708,14 @@ void Armazem::CuidarDaConexao()
 
 void Armazem::Trabalhar()
 {
+    // ── a PRIMEIRA abertura acontece aqui, antes de esperar por qualquer coisa
+    //
+    // É o que tira o custo do banco de dentro do arranque do servidor: Abrir()
+    // só espera por este resultado, e no máximo ARRANQUE_ESPERA_MS. Se o banco
+    // do dono for lento, o servidor sobe e esta thread continua trabalhando.
+    CuidarDaConexao();
+    m_arranqueFeito.store(true, std::memory_order_release);
+
     while (true)
     {
         Tarefa t;
@@ -1793,7 +1842,11 @@ void Armazem::Trabalhar()
                           "gravado antes da queda, o diario pode ter duas linhas "
                           "para ele (a segunda vem marcada) — o vinculo, nao: ele "
                           "e o mesmo.", ok ? "deu certo" : "tambem falhou");
-                if (ok) m_bancoServe.store(true, std::memory_order_release);
+                if (ok)
+                {
+                    m_estavaServindo = true;
+                    m_bancoServe.store(true, std::memory_order_release);
+                }
             }
             else
             {

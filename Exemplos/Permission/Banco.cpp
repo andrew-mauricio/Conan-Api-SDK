@@ -633,6 +633,81 @@ bool ValidarChave(const char* valor, int teto, const char* oQueE,
     }
     return true;
 }
+
+// ============================================================================
+//  ValidarValorDeConexao — MysqlHost / MysqlUser / MysqlDB
+//
+//  INVARIANTE  INV-CONFIG-002
+//  Nome:        espaço na ponta de host, usuário e banco é recusado NA ENTRADA
+//  Descrição:   MysqlHost, MysqlUser e MysqlDB não podem começar nem terminar
+//               com espaço ou tab.
+//  Dano se quebrado: o dono não consegue consertar o que não consegue VER.
+//  Camadas:     esta função — e só ela pode ser, porque é o último ponto em que
+//               o texto do arquivo ainda existe do jeito que ele digitou.
+//
+//  O DEFEITO REAL QUE MOTIVOU, medido em 18/08/2026 rodando sob Wine contra o
+//  MySQL 8.4.11 de teste (testes/simulador_dono.cpp, um config por vez):
+//
+//    MysqlHost "127.0.0.1 "        -> "nao consegui resolver o endereco
+//                                      '127.0.0.1 '"
+//    MysqlUser "conan "            -> erro 1045, "Access denied for user
+//                                      'conan '@..."
+//    MysqlDB   "conan_permission " -> erro 1102 CRU, "Incorrect database name
+//                                      'conan_permission '" — sem tradução
+//                                      nenhuma e sem dizer o que fazer.
+//
+//  As três mensagens são VERDADEIRAS e INÚTEIS: o espaço não aparece na tela.
+//  O dono lê '127.0.0.1 ', reconhece o endereço que ele mesmo digitou, confere
+//  o arquivo, vê a mesma coisa — e conclui que o plugin está com defeito. Ele
+//  não tem como ver a diferença; nós temos.
+//
+//  POR QUE RECUSAR E NÃO APARAR SOZINHO: aparar em silêncio faria o plugin
+//  conectar como um usuário — ou num banco — DIFERENTE do que está escrito no
+//  arquivo. Este código já decidiu essa mesma questão uma vez, para chave de
+//  grupo (ValidarChave, logo acima), pelo mesmo motivo. Duas respostas
+//  diferentes para o mesmo problema no mesmo arquivo é o que confunde.
+//
+//  E POR QUE A SENHA FICA DE FORA: senha com espaço na ponta é uma senha
+//  legítima. Recusar quebraria quem tem uma. A senha é dita na mensagem do
+//  erro 1045, que é onde ela aparece.
+// ============================================================================
+bool ValidarValorDeConexao(const std::string& valor, const char* chave,
+                           std::string& erro)
+{
+    if (valor.empty()) return true;      // ausente/vazio é tratado por quem chama
+
+    const char p = valor.front(), u = valor.back();
+    const bool comeca = (p == ' ' || p == '\t');
+    const bool termina = (u == ' ' || u == '\t');
+    if (!comeca && !termina) return true;
+
+    std::string limpo = valor;
+    while (!limpo.empty() && (limpo.front() == ' ' || limpo.front() == '\t')) limpo.erase(limpo.begin());
+    while (!limpo.empty() && (limpo.back()  == ' ' || limpo.back()  == '\t')) limpo.pop_back();
+
+    // Os colchetes são o instrumento: eles dão uma borda ao valor, e é contra a
+    // borda que o vão do espaço aparece. Sem eles a mensagem seria tão invisível
+    // quanto as três que ela substitui.
+    //
+    // 600 e não 420: o texto fixo tem ~335 bytes e os dois %.80s podem somar
+    // 160, o que estouraria 420 e faria o snprintf cortar justamente o fim —
+    // que é onde está a instrução ("apague o espaço"). Mensagem truncada no
+    // conselho é a que sobra quando o nome do host é longo, e é exatamente o
+    // caso do dono que usa um endereço de provedor. Registrar() aceita 1024 e o
+    // prefixo custa 35, então 600 cabe com folga.
+    char b[600];
+    std::snprintf(b, sizeof(b),
+        "\"%s\" %s com ESPACO. Espaco nao aparece na tela — por isso o valor "
+        "parece certo quando voce confere o arquivo. Entre colchetes ele fica "
+        "visivel: [%.80s] tem %zu caracteres; o certo e [%.80s], com %zu. "
+        "Apague o espaco no config.json. Nao aparo sozinho de proposito: isso "
+        "mudaria calado o endereco, o usuario ou o banco que voce escreveu.",
+        chave,
+        (comeca && termina) ? "comeca E termina" : (comeca ? "comeca" : "termina"),
+        valor.c_str(), valor.size(), limpo.c_str(), limpo.size());
+    erro = b;
+    return false;
+}
 }   // namespace anônimo
 
 const Sql& SqlDoSqlite() { return SQL_SQLITE; }
@@ -669,6 +744,9 @@ bool LerConfigBanco(const char* caminhoJson, const char* caminhoPadraoDb,
         std::string tipo, host, usuario, senha, banco, caminho;
         int64_t porta = 0, msConectar = 0, msOperar = 0;
         bool temPorta = false;
+        // O que o dono ESCREVEU na MysqlPort, em texto. Existe só para a
+        // mensagem de erro — ver INV-CONFIG-001 abaixo, na recusa da porta.
+        std::string portaComoEscrita;
     } L;
 
     const char* q =
@@ -688,11 +766,80 @@ bool LerConfigBanco(const char* caminhoJson, const char* caminhoPadraoDb,
         if ((t = Txt(st, 3))) l->senha   = t;
         if ((t = Txt(st, 4))) l->banco   = t;
         if (sqlite3_column_type(st, 5) != SQLITE_NULL)
-        { l->porta = sqlite3_column_int64(st, 5); l->temPorta = true; }
+        {
+            // O int64 vem PRIMEIRO, como sempre veio: é ele que decide, e a
+            // ordem preservada é a que os testes já exercitaram. O texto é
+            // colhido depois e só alimenta a mensagem de erro.
+            l->porta = sqlite3_column_int64(st, 5); l->temPorta = true;
+            if ((t = Txt(st, 5))) l->portaComoEscrita = t;
+        }
         if ((t = Txt(st, 6))) l->caminho = t;
         if (sqlite3_column_type(st, 7) != SQLITE_NULL) l->msConectar = sqlite3_column_int64(st, 7);
         if (sqlite3_column_type(st, 8) != SQLITE_NULL) l->msOperar   = sqlite3_column_int64(st, 8);
     }, &L, erro)) return false;
+
+    // ── chave escrita na caixa errada ───────────────────────────────────────
+    //
+    // INV-CONFIG-002. `json_extract` casa a chave EXATAMENTE: "$.Database" não
+    // encontra "database" nem "DATABASE". Quem escrevesse a chave na caixa
+    // errada tinha o bloco inteiro ignorado, caía no sqlite calado e só
+    // descobria semanas depois — procurando o dado no MySQL e não achando.
+    //
+    // É o MESMO dano que a recusa de valor logo abaixo já fecha ("mysqll"), por
+    // um caminho diferente. Fechar um e deixar o outro aberto é a pior das
+    // combinações: dá a impressão de que a configuração é conferida.
+    //
+    // Aqui só se RECUSA — nunca se adivinha. Aceitar "database" calado criaria
+    // uma segunda grafia válida que não está em documento nenhum, e o próximo
+    // dono de servidor copiaria a grafia errada de um fórum.
+    {
+        static const char* const ESPERADAS[] = {
+            "Database", "MysqlHost", "MysqlUser", "MysqlPass", "MysqlDB",
+            "MysqlPort", "DbPathOverride", "MysqlTempoConectarMs",
+            "MysqlTempoOperarMs"
+        };
+        std::string escritas;
+        if (!j.Percorrer("SELECT key FROM json_each(?1);", texto,
+                         [](sqlite3_stmt* st, void* p)
+        {
+            const char* k = Txt(st, 0);
+            if (k) { *static_cast<std::string*>(p) += k; *static_cast<std::string*>(p) += '\n'; }
+        }, &escritas, erro)) return false;
+
+        size_t ini = 0;
+        while (ini < escritas.size())
+        {
+            size_t fim = escritas.find('\n', ini);
+            if (fim == std::string::npos) fim = escritas.size();
+            std::string k = escritas.substr(ini, fim - ini);
+            ini = fim + 1;
+            if (k.empty()) continue;
+
+            std::string kmin = k;
+            for (char& c : kmin) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+            for (const char* e : ESPERADAS)
+            {
+                std::string emin = e;
+                for (char& c : emin) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                // Só reclama de quem ERROU a caixa. Chave idêntica passa direto,
+                // e chave que não parece nenhuma das nossas é ignorada de
+                // propósito: o dono pode ter anotações no arquivo dele.
+                if (kmin == emin && k != e)
+                {
+                    char b[320];
+                    std::snprintf(b, sizeof(b),
+                        "no permission.json a chave \"%.40s\" esta escrita com a "
+                        "caixa errada — o nome certo e \"%s\" (maiusculas e "
+                        "minusculas contam). Do jeito que esta, ela seria "
+                        "IGNORADA e seus dados iriam para o banco em arquivo "
+                        "local sem nenhum aviso.", k.c_str(), e);
+                    erro = b;
+                    return false;
+                }
+            }
+        }
+    }
 
     // ── qual banco ──────────────────────────────────────────────────────────
     //
@@ -753,14 +900,89 @@ bool LerConfigBanco(const char* caminhoJson, const char* caminhoPadraoDb,
     }
     else saida.banco = L.banco;
 
+    // ── INV-CONFIG-003: sem MysqlUser, NÃO se cai em "root" ──────────────────
+    //
+    //  DEFEITO REAL, medido em 18/08/2026 (testes/simulador_dono.cpp). Com
+    //  "Database": "mysql" e a chave MysqlUser ausente ou vazia, o padrão de
+    //  ConfigBanco — usuario = "root" — passava a valer, e o log dizia:
+    //        o MySQL recusou o login do usuario 'root'
+    //  O dono nunca escreveu "root" em lugar nenhum. Três estragos:
+    //
+    //   1. é um FALLBACK QUE AMPLIA PERMISSÃO: na falta de instrução, o plugin
+    //      escolhia sozinho a conta mais poderosa do banco. A §11 da
+    //      ENGENHARIA-DE-ALTA-GARANTIA proíbe isso por nome;
+    //   2. o comentário do próprio permission.json manda o contrário — "NAO use
+    //      o root: crie um usuario so para isto". Arquivo e código diziam coisas
+    //      opostas sobre a mesma chave, e o código vencia calado;
+    //   3. quando o root do dono POR ACASO aceita a senha que ele colou (o caso
+    //      comum num MySQL local recém-instalado), não há erro nenhum: o plugin
+    //      entra como root e cria as tabelas como root, em silêncio. É o mesmo
+    //      estrago que o MysqlDB sem padrão evita logo acima, e pela mesma
+    //      razão: o que não foi dito não se adivinha.
+    //
+    //  VEM DEPOIS DO MysqlDB de propósito: quando as duas faltam, o dono ouve
+    //  primeiro a mesma queixa que ouvia antes desta guarda existir. Mudar a
+    //  ordem só para pôr a novidade na frente trocaria uma mensagem já decidida
+    //  (e testada em 9b) por nada.
+    if (saida.tipo == ConfigBanco::MYSQL && L.usuario.empty())
+    {
+        erro = "\"Database\": \"mysql\" sem \"MysqlUser\". Diga com qual usuario "
+               "entrar no MySQL — ex.: \"MysqlUser\": \"conan\". Nao uso o root "
+               "por conta propria: escolher sozinho a conta mais poderosa do "
+               "banco, so porque voce esqueceu uma linha, e o tipo de ajuda que "
+               "sai caro. Crie um usuario so para este plugin.";
+        return false;
+    }
+
+    // ── INV-CONFIG-002: espaço na ponta, recusado aqui e não lá adiante ──────
+    //
+    // SÓ no caminho MySQL, e isso é deliberado: no sqlite estas três chaves não
+    // são usadas para nada, e recusar o arranque de quem roda sqlite por causa
+    // de um espaço num campo que ninguém lê seria transformar um detalhe inerte
+    // em servidor parado. O arquivo de exemplo já vem com as chaves presentes,
+    // então esse caso não é hipotético.
+    if (saida.tipo == ConfigBanco::MYSQL)
+    {
+        if (!ValidarValorDeConexao(L.host,    "MysqlHost", erro)) return false;
+        if (!ValidarValorDeConexao(L.usuario, "MysqlUser", erro)) return false;
+        if (!ValidarValorDeConexao(L.banco,   "MysqlDB",   erro)) return false;
+    }
+
     if (L.temPorta)
     {
         if (L.porta < 1 || L.porta > 65535)
         {
-            char b[200];
-            std::snprintf(b, sizeof(b),
-                "\"MysqlPort\": %lld nao e uma porta. Use um numero de 1 a 65535 "
-                "(o padrao do MySQL e 3306).", static_cast<long long>(L.porta));
+            // ── INV-CONFIG-001 ──────────────────────────────────────────────
+            //  A mensagem de recusa mostra o que o dono ESCREVEU, não o que o
+            //  parser entendeu.
+            //
+            //  DEFEITO REAL, medido em 18/08/2026: com "MysqlPort": "a porta
+            //  padrao" no arquivo, esta linha dizia
+            //        "MysqlPort": 0 nao e uma porta
+            //  O `0` não existe em lugar nenhum do arquivo dele. O dono procura
+            //  um zero que ele nunca digitou, não acha, e a mensagem — que
+            //  estava tecnicamente certa — não o leva a lugar nenhum.
+            //
+            //  O json_extract devolve o texto quando o valor é texto; é ele que
+            //  entra aqui. Note que "33061" ENTRE ASPAS continua funcionando e
+            //  não chega nesta recusa: aspas em volta de um número é o erro mais
+            //  comum de quem edita JSON pela primeira vez, e ele é inofensivo —
+            //  o valor lido é o mesmo. Não se recusa o que não faz mal.
+            char b[400];
+            const bool ehTexto = !L.portaComoEscrita.empty() &&
+                                 L.portaComoEscrita != std::to_string(L.porta);
+            if (ehTexto)
+                std::snprintf(b, sizeof(b),
+                    "\"MysqlPort\": \"%.60s\" nao e um numero de porta — isso e "
+                    "texto, e o MySQL precisa do numero. Escreva  \"MysqlPort\": "
+                    "3306  (3306 e o padrao do MySQL; use outro so se o seu "
+                    "estiver escutando em outro lugar).",
+                    L.portaComoEscrita.c_str());
+            else
+                std::snprintf(b, sizeof(b),
+                    "\"MysqlPort\": %lld nao e uma porta. Use um numero de 1 a "
+                    "65535 (o padrao do MySQL e 3306).",
+                    static_cast<long long>(L.porta));
             erro = b;
             return false;
         }

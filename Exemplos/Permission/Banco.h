@@ -190,6 +190,13 @@ namespace Perm
         Tipo        tipo   = SQLITE;
         std::string caminhoSqlite;        // já resolvido (DbPathOverride aplicado)
         std::string host   = "localhost";
+        // NÃO é o padrão que o dono recebe: com tipo=MYSQL, LerConfigBanco
+        // RECUSA quando MysqlUser vem vazio (INV-CONFIG-003), justamente para
+        // que este "root" nunca valha por omissão — escolher sozinho a conta
+        // mais poderosa do banco é fallback que amplia permissão (§11). Ele
+        // sobrevive aqui só porque no sqlite o campo é inerte. Quem construir
+        // um ConfigBanco na mão, sem passar por LerConfigBanco, contorna a
+        // guarda: preencha o usuário.
         std::string usuario= "root";
         std::string senha;
         // SEM padrão, de propósito: "onde gravar" não se adivinha. Com

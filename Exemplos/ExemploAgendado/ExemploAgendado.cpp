@@ -19,6 +19,17 @@
 #include "Conan/ConanPluginApi.h"
 #include <windows.h>
 
+// ── PROVAR QUE RODEI NA THREAD DO JOGO ──────────────────────────────────────
+//
+// A versão anterior dizia "rodei na thread do jogo" porque Subtract(10,3) deu 7.
+// Isso não prova nada sobre THREAD: a conta daria 7 em qualquer thread. Era uma
+// afirmação com cara de prova, que é pior que nenhuma — o dev copia o exemplo e
+// acha que está verificando algo.
+//
+// O que prova de verdade: guardar o id da thread que executa um hook (essa é a
+// do jogo, por definição) e comparar com o id de dentro da tarefa agendada.
+static DWORD g_threadDoJogo = 0;
+
 // O ponteiro da tabela é guardado em estático porque a tarefa agendada roda
 // muito depois do Carregar, sem receber a tabela de volta — o contexto que o
 // agendador devolve é NOSSO, e aqui não precisamos dele.
@@ -62,7 +73,7 @@ static void Tique(void* /*contexto*/)
     g_api->Log("[agendado] disparo %d aos %lu.%03lus · Subtract_IntInt(10,3)=%d %s "
                "· funil ja passou %llu chamadas",
                g_disparos, dt / 1000, dt % 1000, r,
-               r == 7 ? "<<< CORRETO: rodei na thread do jogo" : "<<< ERRADO",
+               r == 7 ? "<<< a chamada por reflexao funcionou" : "<<< ERRADO",
                (unsigned long long)total);
 
     if (g_disparos >= 4)

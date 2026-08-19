@@ -1,3 +1,76 @@
+Conan-Api SDK 1.1.0 — escrever plugins para Conan Exiles
+===========================================================
+
+Tabela da API: v3
+Serve para a build 24784646 do jogo (UE 5.6.1 (++exiles+release))
+
+O QUE VOCE PRECISA
+------------------
+  Um compilador C++ que gere DLL de 64 bits para Windows. Mais nada.
+  Nao ha biblioteca para linkar, nem codigo nosso para compilar junto.
+
+  Visual Studio 2017, 2019 ou 2022  (v141, v142, v143 — qualquer um)
+     Projeto: Biblioteca de Vinculo Dinamico (DLL)
+     Plataforma: x64            <- obrigatorio; DLL de 32 bits nao carrega
+     C/C++ > Geral > Diretorios de Inclusao Adicionais: a pasta include daqui
+     C/C++ > Geracao de Codigo > Biblioteca de Runtime: /MT   (NAO /MD)
+
+  ou mingw-w64 (Linux, macOS ou Windows)
+     x86_64-w64-mingw32-g++ -std=c++17 -O2 -shared \
+         -I include -o MeuPlugin.dll MeuPlugin.cpp \
+         -static-libgcc -static-libstdc++
+
+  POR QUE /MT E -static-*: sem isso a sua DLL depende do runtime do compilador
+  estar instalado na maquina. O servidor roda sob Wine, num conteiner onde ele
+  pode nao existir — e o sintoma e' LoadLibrary falhando com um codigo generico
+  que nao explica nada.
+
+  POR QUE QUALQUER COMPILADOR SERVE: o que atravessa a fronteira e' uma struct
+  de ponteiros de funcao em C puro. Nao ha std::string nem vtable nossa
+  cruzando, entao nao ha o inferno de ABI que obriga outras APIs a exigir o
+  mesmo compilador delas.
+
+O QUE VEM AQUI
+--------------
+  include/Conan/ConanPluginApi.h    a tabela da API — e' so isto que voce inclui
+  include/Conan/ConanPermission.h   consultar VIP e permissoes (opcional)
+  Exemplos/                         seis exemplos com fonte, para copiar
+  Docs/PARA-DESENVOLVEDORES.md      o guia completo
+  Docs/EVENTOS.md                   quais eventos do jogo existem
+
+COMECE ASSIM
+------------
+  cp -r Exemplos/ExemploOla MeuPlugin
+  cd MeuPlugin && ./compilar.sh
+
+  Depois copie a PASTA MeuPlugin (com a .dll dentro) para
+  Conan-Api/Plugins/ do servidor e reinicie.
+
+VERSOES: O QUE PRECISA BATER
+----------------------------
+  Seu compilador NAO precisa ser o mesmo que o nosso.
+  Sua DLL precisa ser x64 e nao depender de runtime externo (/MT).
+
+  No seu PluginInfo.json, declare de qual versao da tabela voce precisa:
+
+      { "FullName":"Meu Plugin", "Version":"1.0.0", "MinApiVersion":3 }
+
+  Se o servidor tiver uma API mais velha que isso, o carregador RECUSA seu
+  plugin e diz qual versao falta — em vez de deixar rodar lendo estrutura que
+  mudou de tamanho.
+
+  E confira sempre, na primeira linha do seu ConanPluginCarregar:
+
+      if (!api || api->tamanho < sizeof(ConanApiTabela)) return;
+
+QUANDO O JOGO ATUALIZAR
+-----------------------
+  Quem precisa ser regerada e' a API, nao o seu plugin: voce fala com a tabela,
+  e a tabela nao muda de forma. A excecao e' plugin que usa offset cru do jogo
+  (como o layout do chat) — esse precisa de conferencia.
+
+Para RODAR um servidor, baixe o outro pacote: github.com/andrew-mauricio/Conan-Api
+FIMDEV'
 Conan-Api — SDK para escrever plugins
 ======================================
 
@@ -21,59 +94,3 @@ funciona com a Conan-Api instalada no servidor.
 
 Para INSTALAR o que voce compilou, e para rodar um servidor, baixe o pacote do
 servidor: e' outro download, com o carregador e os plugins prontos.
-
-
-==============================================================================================================================================================================================
-
-
-Conan-Api — Plugin Development SDK
-======================================
-
-You need ONE header and a C++ compiler. Nothing to link.
-
-include/Conan/ConanPluginApi.h    the API table — that's all
-include/Conan/ConanPermission.h   check permissions/VIP (optional)
-Exemplos/                         six source examples to copy from
-Docs/PARA-DESENVOLVEDORES.md      the guide
-Docs/EVENTOS.md                   which game events exist
-
-START LIKE THIS:
-
-cp -r Exemplos/ExemploOla MeuPlugin
-cd MeuPlugin && ./compilar.sh
-
-Your plugin RECEIVES the API in a function table and calls everything via api->. Not 
-a single line of the engine is included in your binary — which is why any compiler works 
-(any version of Visual Studio, MinGW, Clang) and why your plugin only runs with Conan-Api 
-installed on the server.
-
-To INSTALL what you compiled and to run a server, download the server package: 
-that is a separate download containing the loader and pre-built plugins.
-
-
-==============================================================================================================================================================================================
-
-
-Conan-Api — SDK para escribir plugins
-======================================
-
-Necesitas UN header y un compilador de C++. Nada que enlazar.
-
-include/Conan/ConanPluginApi.h    la tabla de la API — es solo esto
-include/Conan/ConanPermission.h   consultar permisos/VIP (opcional)
-Exemplos/                         seis ejemplos con código fuente, para copiar
-Docs/PARA-DESENVOLVEDORES.md      la guía
-Docs/EVENTOS.md                   qué eventos del juego existen
-
-EMPIEZA ASÍ:
-
-cp -r Exemplos/ExemploOla MeuPlugin
-cd MeuPlugin && ./compilar.sh
-
-Tu plugin RECIBE la API en una tabla de funciones y llama a todo mediante api->. 
-Ninguna línea del motor entra en tu binario — por eso cualquier compilador sirve 
-(cualquier versión de Visual Studio, MinGW, Clang) y por eso tu plugin solo funciona 
-con la Conan-Api instalada en el servidor.
-
-Para INSTALAR lo que compilaste, y para ejecutar un servidor, descarga el paquete del servidor: 
-es otra descarga, con el cargador y los plugins listos.

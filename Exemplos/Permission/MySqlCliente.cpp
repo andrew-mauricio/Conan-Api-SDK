@@ -1249,11 +1249,27 @@ bool LerPacote(MySqlInterno& I, std::vector<uint8_t>& payload,
                      "Confira MysqlPort no config.json — o padrao do MySQL e 3306.",
                      I.hostAtual.c_str(), (unsigned)I.portaAtual, (unsigned)s);
             else
+                // SEGUNDO DEFEITO DE MENSAGEM, achado em 18/08/2026 derrubando
+                // um proxy no meio de uma operação (testes/teste_banco.cpp,
+                // cenário 6): esta linha abria com "duas threads usam a MESMA
+                // conexao" — e isso é IMPOSSÍVEL aqui. Uso concorrente de
+                // verdade é barrado pela reserva `emUso`, que tem mensagem
+                // própria e nem chega neste ponto. Ou seja: a primeira causa
+                // oferecida ao dono do servidor era a única que ele podia
+                // descartar de antemão, e para descobrir isso ele teria de ler
+                // este arquivo.
+                //
+                // O que realmente produz isto na máquina de um dono: a conexão
+                // foi cortada no meio de uma resposta (banco reiniciado, KILL,
+                // proxy/túnel caindo, NAT expirando a sessão) ou algo entre as
+                // duas pontas mexe no tráfego. Estas vêm primeiro agora.
                 Diga(erro, tamErro,
                      "o fluxo com o MySQL em '%s:%u' saiu de ordem (esperava o pacote %u e veio "
-                     "o %u). Isso acontece quando duas threads usam a MESMA conexao, ou quando "
-                     "algo no meio do caminho (proxy, firewall com inspecao) mexe no trafego. "
-                     "Derrubei a conexao em vez de ler dado trocado.",
+                     "o %u). Quase sempre e a conexao cortada no meio de uma resposta: o banco "
+                     "reiniciou, alguem deu KILL na sessao, ou um proxy/tunel/NAT no meio do "
+                     "caminho derrubou a ligacao. Tambem acontece com firewall que inspeciona e "
+                     "altera o trafego. Derrubei a conexao em vez de ler dado trocado, e vou "
+                     "reconectar sozinho.",
                      I.hostAtual.c_str(), (unsigned)I.portaAtual, (unsigned)I.seq, (unsigned)s);
             return false;
         }
