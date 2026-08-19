@@ -182,10 +182,10 @@ do número. Ele resolve pela reflexão, na build que estiver rodando.
 São coisas diferentes, e as duas aparecem em toda release:
 
 ```
-Conan-Api 2.6.0 — build 24784646
+Conan-Api 2.7.0 — build 24784646
 ```
 
-- **`2.6.0`** — a versão do projeto
+- **`2.7.0`** — a versão do projeto
 - **`build 24784646`** — a versão do **Conan Exiles** para a qual esta API serve
 
 A API conhece o jogo por endereços de memória daquela build. Quando a Funcom
@@ -268,11 +268,42 @@ Cada plugin é **uma pasta**, com tudo dentro:
 ```
 Conan-Api/Plugins/MeuPlugin/
    MeuPlugin.dll        <- o carregador procura este nome primeiro
-   config.json          <- CaminhoConfig("MeuPlugin")
+   PluginInfo.json      <- opcional; se existir, o log mostra nome e versão
+   config.json          <- opcional, e SEU: CaminhoConfig("MeuPlugin")
    meubanco.db          <- CaminhoDados("MeuPlugin", "meubanco.db")
 ```
 
 O usuário instala arrastando a pasta. Desinstala apagando a pasta.
+
+### Só a DLL é obrigatória
+
+| arquivo | obrigatório? | quem lê |
+|---|---|---|
+| `MeuPlugin.dll` | **sim** — a única coisa que o carregador precisa | o carregador |
+| `PluginInfo.json` | não | o carregador, **se** existir |
+| `config.json` | não | **o seu plugin**; a API nunca abre |
+
+Um plugin com nada além da DLL carrega e funciona. O `Cartografo` e o
+`GravadorDeEventos` deste projeto rodam assim:
+
+```
+  [ok] Cartografo   [sem PluginInfo.json]
+```
+
+O `config.json` não tem formato imposto por nós. A API só devolve o **caminho**
+com `CaminhoConfig("MeuPlugin")` — o arquivo pode ser JSON, pode ter outro nome,
+pode não existir.
+
+**Sem `PluginInfo.json` você perde quatro coisas:**
+
+- o nome e a versão do plugin no log (aparece só o nome da pasta)
+- `MinApiVersion` — nada recusa o seu plugin numa API velha demais
+- `Dependencies` — nada garante que o Permission suba antes de você
+- `BuildDoJogo` / `UsaOffsetsCrus` — o plugin carrega depois de uma atualização
+  do jogo mesmo quando não deveria
+
+Para um plugin que só você usa, nada disso importa. Para um que você **publica**,
+todos importam.
 
 **Se houver mais de uma `.dll` na pasta**, o carregador usa a que tem o nome da
 pasta. Havendo só uma, usa essa. Havendo duas e nenhuma com o nome da pasta, ele
@@ -421,6 +452,75 @@ precisa do mundo, o lugar é o `Carregar`.
 **Você não precisa exportar o `Registrar`.** Sem ele o plugin funciona
 exatamente como antes — os hooks entram quando o `Carregar` roda. O `Registrar`
 só encurta a janela.
+
+---
+
+## Do chat até o jogador: o caminho que todo plugin precisa
+
+É o pulo que falta em quase toda API, e sem ele as 9.247 classes não servem para
+nada: **alguém digitou algo — quem foi, e onde ele está?**
+
+```cpp
+// O auxiliar que se repete em todo plugin: resolve o offset PELO NOME,
+// lê o ponteiro, e recusa o que não for legível.
+static void* MembroPonteiro(void* obj, const char* nome)
+{
+    if (!obj) return nullptr;
+    const int32_t off = g_api->OffsetDoMembro(obj, nome);
+    if (off < 0) return nullptr;
+
+    void* p = nullptr;
+    if (g_api->LerMembro(obj, uint32_t(off), &p, sizeof(p)) <= 0) return nullptr;
+    if (!p || !g_api->Legivel(p, 8)) return nullptr;
+    return p;
+}
+
+extern "C" ConanAcao AoFalar(ConanChamada* c)
+{
+    void* controller = c->Obj;              // 1. QUEM falou
+
+    char nome[128] = "";                    // 2. o NOME está no PlayerState
+    if (void* ps = MembroPonteiro(controller, "PlayerState"))
+    {
+        const int32_t off = g_api->OffsetDoMembro(ps, "PlayerNamePrivate");
+        if (off >= 0) g_api->LerTextoDoJogo(ps, uint32_t(off), nome, sizeof(nome));
+    }
+
+    void* corpo = MembroPonteiro(controller, "Character");   // 3. o PERSONAGEM
+    if (!corpo) corpo = MembroPonteiro(controller, "Pawn");
+
+    struct { double X, Y, Z; } pos{};       // 4. a POSIÇÃO, pela função do jogo
+    g_api->ChamarFuncao(corpo, "K2_GetActorLocation", nullptr, nullptr, 0,
+                        &pos, sizeof(pos));
+
+    g_api->MensagemParaJogador(nome, "achei você");
+    return CONAN_CANCELAR;
+}
+```
+
+**Nenhum offset gravado.** Rodando neste servidor, `OffsetDoMembro` devolveu
+`PlayerState → 0x308`, `Character → 0x350`, `Pawn → 0x340`. Escrever esses
+números no seu código funciona hoje e lê o campo vizinho depois do próximo patch.
+
+A posição vem da **função** e não do campo de propósito: `RelativeLocation` é
+replicado, e ler o campo cru entrega o valor de antes da última replicação.
+
+### Sem hook nenhum
+
+Quando o começo não é o jogador falando — tarefa agendada, comando de admin:
+
+```cpp
+void* pcs[64];
+int n = g_api->FindObjects("ConanPlayerController", pcs, 64, /*incluirFilhas=*/1);
+```
+
+Daí em diante é o mesmo caminho.
+
+**Não guarde esses ponteiros entre chamadas.** O coletor de lixo do jogo destrói
+objetos e reaproveita endereços; `Legivel` continuaria dizendo que sim, porque a
+página segue mapeada, e você agiria sobre outra coisa.
+
+Exemplo completo em `Exemplos/ExemploJogador`.
 
 ---
 
