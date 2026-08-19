@@ -128,11 +128,11 @@ struct e chama lixo, num servidor com API mais velha.
 São coisas diferentes, e as duas aparecem em toda release:
 
 ```
-Conan-Api 1.1.0 — build 24383534
+Conan-Api — build 24784646
 ```
 
 - **`1.1.0`** — a versão do projeto
-- **`build 24383534`** — a versão do **Conan Exiles** para a qual esta API serve
+- **`build 24784646`** — a versão do **Conan Exiles** para a qual esta API serve
 
 A API conhece o jogo por endereços de memória daquela build. Quando a Funcom
 atualizar, esses endereços mudam de lugar e a API **se recusa a carregar**, de
