@@ -118,7 +118,7 @@ cd MeuPlugin
 | **ExemploComando** | interceptar `!comando` no chat e engolir a mensagem |
 | **ExemploVip** | consultar o Permission e continuar funcionando quando ele não está instalado |
 | **ExemploAgendado** | rodar código de tempos em tempos, na thread certa |
-| **ExemploBlueprint** | interceptar execução de Blueprint — o que o hook por nome não vê |
+| **ExemploBlueprint** | interceptar execução de Blueprint — o que o hook por nome não vê. **Leia o aviso no topo do arquivo antes de copiar**: a versão anterior dele deixava uma janela em que o detour rodava sem o ponteiro original, e nessa janela toda execução de Blueprint era descartada em silêncio — como o login do Conan é feito de Blueprint, ninguém entrava no servidor |
 | **Permission** | o plugin completo: banco, configuração, e uma ABI que outros consomem |
 
 ---
@@ -146,7 +146,15 @@ O `PluginInfo.json` é o cartão de identidade:
 ```
 
 `MinApiVersion` faz o carregador **recusar** seu plugin numa API velha demais,
-em vez de deixá-lo rodar e ler lixo. `Dependencies` garante que o Permission
+em vez de deixá-lo rodar e ler lixo. A tabela desta versão é a **v4** — declare
+o menor número de que você realmente precisa, não o mais alto: quem pede v4 sem
+usar nada da v4 se recusa a rodar em servidor que ainda está na v3, sem motivo.
+
+Campo novo entra sempre no **fim** da tabela, e nada é removido nem reordenado.
+Isso está exercitado: um plugin compilado contra a v3 (328 bytes de tabela) foi
+carregado sobre a API v4 (344 bytes) num servidor de verdade, chamou uma função
+e o servidor seguiu de pé. Seu plugin publicado continua funcionando quando a
+tabela cresce. `Dependencies` garante que o Permission
 suba antes de você — sem isso, você perguntaria a ele antes de ele existir, e
 concluiria que não está instalado. (Isso aconteceu de verdade aqui.)
 
@@ -192,10 +200,57 @@ contra o parâmetro real e recusa quando não bate. Se você passar um `float` o
 o jogo espera `double`, ela para e diz. Medimos: **293 funções** desta build
 corrompem a pilha por esse caminho, e o sintoma aparece longe da causa.
 
-**Mandar texto seu para o jogo.** Você lê texto que já é do jogo à vontade. Mas
-montar uma string sua e passá-la adiante derruba o servidor: o jogo destrói o
-bloco de parâmetros ao retornar e chama o alocador **dele** sobre memória
-**sua**. Isso foi testado, não é teoria.
+**Montar você mesmo uma string do jogo.** O jogo destrói o bloco de parâmetros
+ao retornar e chama o alocador **dele** sobre o ponteiro que estiver lá. Se for
+memória sua, o servidor cai — testado, não é teoria.
+
+Você não precisa fazer isso: **escreva texto normal e a API monta**.
+
+```cpp
+pc->ClientHUDShowNotification("Bem-vindo ao servidor!", true, true);
+```
+
+Por baixo, a API pede a `FString` (ou o `FText`) ao **próprio jogo** e devolve o
+que ele construiu. Nenhuma memória sua atravessa a fronteira, e quem aloca é
+quem libera.
+
+---
+
+## O jogo inteiro, com assinatura de verdade
+
+O `ConanSDK.h` traz **9.228 classes** do Conan com os membros e as funções que a
+reflexão do jogo declara. Não é lista de nomes: **85% das 36.750 funções têm
+assinatura completa** — tipo e nome de cada parâmetro, conferidos contra o
+próprio servidor rodando.
+
+```cpp
+#include "Conan/ConanSDK.h"
+
+cm->TeleportPlayer(1000.0f, 2000.0f, 300.0f);     // ponto de salvamento
+FVector onde = ator->K2_GetActorLocation();        // onde ele está
+cm->CheatSpawnItem(TemplateId, quantidade);        // item para a loja
+pc->ClientHUDShowNotification("Bem-vindo!", true, true);
+```
+
+Parâmetro de **saída** vira referência, e a API copia o valor de volta:
+
+```cpp
+FHitResult batida{};
+ator->K2_SetActorLocation(destino, false, batida, true);
+```
+
+Lista de saída vira ponteiro, capacidade e contagem — com os **elementos**
+copiados, nunca o ponteiro do jogo (que morre quando a chamada retorna):
+
+```cpp
+AActor* achados[32]; int quantos = 0;
+lib->AlgumaBuscaDeAtores(..., achados, 32, quantos);
+```
+
+Os 15% restantes saem como template genérico, e isso é deliberado: são tipos que
+**carregam posse de memória do jogo** (`TArray<FString>`, `TMap`, delegates
+multicast). Passá-los por valor duplicaria ponteiros, e alguém liberaria duas
+vezes. Preferimos template sem tipo a assinatura que corrompe.
 
 ---
 
