@@ -12,6 +12,10 @@
 
 # Conan-Api SDK — escreva plugins para Conan Exiles
 
+Se você já escreveu plugin para **ArkApi** ou **AsaApi**, isto é a mesma coisa,
+para Conan Exiles: o plugin roda dentro do servidor, o jogador não baixa nada, e
+você fala com o jogo por uma tabela de funções.
+
 Você precisa de **um header** e de um compilador C++. Não tem biblioteca para
 linkar, não tem código nosso para compilar junto, não tem projeto para
 configurar.
@@ -222,6 +226,83 @@ Os 11% restantes saem como template genérico, e é deliberado: são tipos que
 **carregam posse de memória do jogo** (`TArray<FString>`, `TMap`, delegates
 multicast). Passá-los por valor duplicaria ponteiros, e alguém liberaria duas
 vezes. Preferimos um template sem tipo a uma assinatura que corrompe.
+
+---
+
+## Do chat até o jogador: o caminho que todo plugin precisa
+
+Este é o pulo que falta em quase toda API, e sem ele as 9.247 classes não
+servem para nada: **alguém digitou algo — quem foi, e onde ele está?**
+
+```cpp
+extern "C" ConanAcao AoFalar(ConanChamada* c)
+{
+    // 1. QUEM: num hook, c->Obj é o objeto que recebeu a chamada.
+    //    No chat, é o ConanPlayerController de quem digitou.
+    void* controller = c->Obj;
+
+    // 2. O NOME mora no PlayerState, não no controller.
+    char nome[128] = "";
+    if (void* ps = MembroPonteiro(controller, "PlayerState"))
+    {
+        const int32_t off = g_api->OffsetDoMembro(ps, "PlayerNamePrivate");
+        if (off >= 0) g_api->LerTextoDoJogo(ps, uint32_t(off), nome, sizeof(nome));
+    }
+
+    // 3. O PERSONAGEM. "Character" é o pawn já tipado; "Pawn" cobre o resto.
+    void* corpo = MembroPonteiro(controller, "Character");
+    if (!corpo) corpo = MembroPonteiro(controller, "Pawn");
+
+    // 4. A POSIÇÃO, pela função do jogo — não pelo campo, que é replicado.
+    struct { double X, Y, Z; } pos{};
+    g_api->ChamarFuncao(corpo, "K2_GetActorLocation", nullptr, nullptr, 0,
+                        &pos, sizeof(pos));
+
+    g_api->MensagemParaJogador(nome, "achei você");
+    return CONAN_CANCELAR;
+}
+```
+
+O `MembroPonteiro` é o auxiliar que se repete em todo plugin — resolve o offset
+**pelo nome**, lê o ponteiro e recusa o que não for legível:
+
+```cpp
+static void* MembroPonteiro(void* obj, const char* nome)
+{
+    if (!obj) return nullptr;
+    const int32_t off = g_api->OffsetDoMembro(obj, nome);   // pela reflexão
+    if (off < 0) return nullptr;                            // não existe aqui
+
+    void* p = nullptr;
+    if (g_api->LerMembro(obj, uint32_t(off), &p, sizeof(p)) <= 0) return nullptr;
+    if (!p || !g_api->Legivel(p, 8)) return nullptr;
+    return p;
+}
+```
+
+**Nenhum offset gravado.** Rodando neste servidor, `OffsetDoMembro` devolveu
+`PlayerState → 0x308`, `Character → 0x350`, `Pawn → 0x340`. Escrever esses
+números no seu código funciona hoje e lê o campo vizinho depois do próximo patch
+— sem erro, sem log, só com dado errado.
+
+### E sem hook nenhum?
+
+Quando o começo não é o jogador falando — uma tarefa agendada, um comando de
+admin — o caminho de entrada é varrer:
+
+```cpp
+void* pcs[64];
+int n = g_api->FindObjects("ConanPlayerController", pcs, 64, /*incluirFilhas=*/1);
+```
+
+Daí em diante é o mesmo: `PlayerState` para o nome, `Character` para o corpo.
+
+**Não guarde esses ponteiros entre chamadas.** O coletor de lixo do jogo destrói
+objetos e reaproveita endereços; `Legivel` continuaria dizendo que sim, porque a
+página segue mapeada, e você agiria sobre outra coisa. Pegue de novo a cada uso.
+
+O exemplo completo, com log e tratamento de cada caso, está em
+`Exemplos/ExemploJogador`.
 
 ---
 
@@ -463,6 +544,25 @@ o pacote pronto e o guia de instalação.
 
 São separados de propósito: quem administra um servidor não precisa de
 compilador para nada, e quem escreve plugin não precisa dos binários do servidor.
+
+---
+
+## Licença, em três linhas
+
+**O que você escreve é seu, e você pode vender.** Plugin feito com esta API tem
+a licença que você quiser, sem pedir autorização, sem pagar nada, sem dividir
+nada. Servidor que cobra dos jogadores também pode usar.
+
+**A API em si não se revende.** Ela não pode ser vendida, licenciada, alugada,
+nem incluída em pacote comercial. E não se re-hospeda: nada de espelhar o
+download ou embutir os arquivos em outro instalador.
+
+**O link é livre.** Divulgue e indexe o link deste repositório onde quiser —
+site, fórum, vídeo, marketplace. Quem quiser a API pega aqui.
+
+O texto completo está no [LICENSE](LICENSE), e ele explica o porquê: a API é a
+fundação, e existe **uma** para que haja um caminho de atualização quando o jogo
+muda, em vez de cinco cópias divergentes que ninguém acompanha.
 
 ---
 
