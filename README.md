@@ -220,19 +220,28 @@ quem libera.
 
 ## O jogo inteiro, com assinatura de verdade
 
-O `ConanSDK.h` traz **9.228 classes** do Conan com os membros e as funções que a
-reflexão do jogo declara. Não é lista de nomes: **85% das 36.750 funções têm
+O `ConanSDK.h` traz **8.287 classes** do Conan com os membros e as funções que a
+reflexão do jogo declara. Não é lista de nomes: **85% das 36.757 funções têm
 assinatura completa** — tipo e nome de cada parâmetro, conferidos contra o
 próprio servidor rodando.
 
 ```cpp
 #include "Conan/ConanSDK.h"
 
-cm->TeleportPlayer(1000.0f, 2000.0f, 300.0f);     // ponto de salvamento
-FVector onde = ator->K2_GetActorLocation();        // onde ele está
-cm->CheatSpawnItem(TemplateId, quantidade);        // item para a loja
-pc->ClientHUDShowNotification("Bem-vindo!", true, true);
+void ConanPluginCarregar(const ConanApiTabela* api)
+{
+    ConanApi::UsarTabela(api);          // <- obrigatória, uma vez
+
+    cm->TeleportPlayer(1000.0f, 2000.0f, 300.0f);   // ponto de salvamento
+    FVector onde = ator->K2_GetActorLocation();      // onde ele está
+    cm->CheatSpawnItem(TemplateId, quantidade);      // item para a loja
+}
 ```
+
+**`ConanApi::UsarTabela(api)` não é opcional.** O header não tem de onde tirar a
+tabela sozinho — ela chega no seu `ConanPluginCarregar`. Sem essa linha, toda
+chamada do SDK vira nada, em silêncio; por isso a primeira delas avisa no
+`stderr` em vez de deixar você caçar o motivo.
 
 Parâmetro de **saída** vira referência, e a API copia o valor de volta:
 
@@ -241,13 +250,26 @@ FHitResult batida{};
 ator->K2_SetActorLocation(destino, false, batida, true);
 ```
 
-Lista de saída vira ponteiro, capacidade e contagem — com os **elementos**
-copiados, nunca o ponteiro do jogo (que morre quando a chamada retorna):
+Texto de saída vira `char*` e capacidade, **decodificado** — nunca o ponteiro do
+jogo, que morre quando a chamada retorna:
+
+```cpp
+char esquerda[64], direita[64];
+lib->Split("conan|api", "|", esquerda, sizeof(esquerda), direita, sizeof(direita));
+```
+
+Lista de saída vira ponteiro, capacidade e contagem, com os **elementos**
+copiados:
 
 ```cpp
 AActor* achados[32]; int quantos = 0;
 lib->AlgumaBuscaDeAtores(..., achados, 32, quantos);
 ```
+
+**Você não linka nada.** O SDK inteiro conversa pela tabela de funções — é por
+isso que ele funciona igual em MSVC, MinGW e clang. Se algum dia o seu projeto
+pedir uma `libconanapi.a`, algo está errado: não existe biblioteca nossa para
+você linkar.
 
 Os 15% restantes saem como template genérico, e isso é deliberado: são tipos que
 **carregam posse de memória do jogo** (`TArray<FString>`, `TMap`, delegates
