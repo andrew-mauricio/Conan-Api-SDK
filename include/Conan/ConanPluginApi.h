@@ -83,7 +83,7 @@ extern "C" {
 
 // A versão sobe quando campos são ACRESCENTADOS. Nunca quando algo muda de
 // lugar — isso não acontece.
-#define CONAN_API_VERSAO 5
+#define CONAN_API_VERSAO 6
 
 // ── o que um hook recebe ────────────────────────────────────────────────────
 //
@@ -137,6 +137,27 @@ typedef enum ConanRecusa
 //
 //  Ordem NUNCA muda. Campos novos entram no fim, e `versao` sobe.
 // ============================================================================
+typedef enum ConanTipoSaida
+{
+    CONAN_SAIDA_POD = 0,   // copia os bytes do slot
+    CONAN_SAIDA_TEXTO,     // FString: DECODIFICA. Copiar os 16 bytes daria
+                           // ao plugin um ponteiro que o ProcessEvent
+                           // destroi ao retornar.
+    CONAN_SAIDA_TEXTO_RICO,// FText, pelo mesmo motivo
+    CONAN_SAIDA_LISTA      // TArray: copia os ELEMENTOS, nunca o cabecalho
+} ConanTipoSaida;
+
+typedef struct ConanSaida
+{
+    int      indice;       // qual parametro, na ordem da reflexao
+    void*    destino;      // onde escrever
+    uint32_t tipo;         // ConanTipoSaida
+    uint32_t capacidade;   // POD: bytes · TEXTO: capacidade do char* ·
+                           // LISTA: quantos elementos cabem
+    uint32_t tamElemento;  // so' LISTA
+    int*     contagem;     // so' LISTA: recebe quantos couberam (pode ser NULL)
+} ConanSaida;
+
 typedef struct ConanApiTabela
 {
     // ── cabeçalho: confira isto antes de usar o resto ───────────────────────
@@ -421,6 +442,32 @@ typedef struct ConanApiTabela
     int32_t (*OffsetDoMembro)(void* objeto, const char* nome);
     int     (*EhReplicado)(void* objeto, uint32_t offset);
     int     (*NomeDoMembro)(void* objeto, uint32_t offset, char* saida, int tam);
+
+    // ── v6: CHAMAR COM PARAMETRO DE SAIDA, SEM LINKAR NADA ──────────────────
+    //
+    // POR QUE ISTO EXISTE
+    // -------------------
+    // O `ConanSDK.h` — 8.287 classes do jogo com assinatura de verdade — nao ia
+    // no pacote, e o README o anunciava. A causa: ele emite `ConanApi::Call<>` e
+    // `ConanApi::CallSaida<>`, que chamam `InvokeRaw`/`ResolveFunction`, e essas
+    // moram na libconanapi.a. Ou seja: usar o SDK exigia linkar a nossa
+    // biblioteca — exatamente o que o modelo de tabela existe para evitar, e o
+    // contrario do que a capa promete ("seu compilador nao importa").
+    //
+    // `ChamarFuncao` (v1) ja' cobria ENTRADA e retorno. Faltava o que o jogo faz
+    // em 6.157 das assinaturas: escrever num slot de SAIDA. Sem isto, um terco
+    // do SDK nao tinha como funcionar por tabela.
+    //
+    // Os quatro tipos de saida nao sao capricho — cada um tem um jeito so' de
+    // ser lido em seguranca:
+
+    // Como ChamarFuncao, mais os slots de saida. Devolve 1 se executou.
+    // As saidas sao copiadas DEPOIS da chamada e ANTES de o jogo destruir o
+    // bloco de parametros — que e' a unica janela em que elas valem.
+    int (*ChamarFuncaoEx)(void* obj, const char* nomeFuncao,
+                          const void** args, const uint32_t* tams, int nargs,
+                          const ConanSaida* saidas, int nsaidas,
+                          void* retorno, uint32_t tamRetorno);
 
     // Campos novos entram AQUI, no fim, e `versao` sobe. Nunca no meio.
 } ConanApiTabela;

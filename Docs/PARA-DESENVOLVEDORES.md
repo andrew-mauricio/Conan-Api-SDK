@@ -74,11 +74,31 @@ Não existe biblioteca nossa para você linkar. O que atravessa a fronteira é u
 `struct` de ponteiros de função em **C puro**, com convenção `__cdecl` — e sobre
 isso todo compilador concorda.
 
-| você usa | funciona? |
-|---|---|
-| Visual Studio 2017, 2019, 2022 (v141, v142, v143) | sim |
-| mingw-w64 (qualquer GCC recente) | sim |
-| clang com alvo Windows | sim |
+| você usa | funciona? | testado por nós |
+|---|---|---|
+| Visual Studio 2026 (`cl` 19.51, v145) | sim | **sim** — é o que usamos para validar cada release |
+| Visual Studio 2017, 2019, 2022 (v141–v143) | sim | não diretamente; a ABI C não mudou entre eles |
+| mingw-w64 (GCC 13+) | sim | **sim** — cada plugin do SDK compila com ele a cada build |
+| clang com alvo Windows | sim | não diretamente |
+
+O que testamos a cada versão é o `ExemploOla` **baixado do pacote publicado**,
+compilado com MinGW e com MSVC, e os dois binários subindo no mesmo servidor.
+Não é declaração de intenção: se um dos dois parar de funcionar, a release não
+sai.
+
+O comando MSVC que usamos, para você copiar:
+
+```bat
+cl /nologo /std:c++17 /O2 /EHsc /LD /MT ^
+   /I "caminho\do\sdk\include" ^
+   MeuPlugin.cpp /Fe:MeuPlugin.dll
+```
+
+Os exports saem sem decoração de nome (`ConanPluginCarregar`, não
+`?ConanPluginCarregar@@YA...`) por causa do `extern "C"` no header, e a DLL
+resultante depende só de `KERNEL32.dll` por causa do `/MT`. Se você vir
+`MSVCP140.dll` ou `VCRUNTIME140.dll` na lista de dependências, o `/MT` não
+pegou — e a DLL vai falhar ao carregar num servidor sob Wine.
 
 Em APIs que entregam biblioteca compilada, isso não é verdade: o layout de
 `std::string` e de vtable muda entre MSVC e MinGW — e muda até entre versões do
@@ -95,7 +115,7 @@ da Microsoft pode não estar instalado.
 O header traz um número:
 
 ```c
-#define CONAN_API_VERSAO 5
+#define CONAN_API_VERSAO 6
 ```
 
 Ele sobe quando **funções novas são acrescentadas** — e elas entram sempre no
@@ -105,14 +125,14 @@ plugin compilado hoje continuar valendo amanhã.
 Declare no seu `PluginInfo.json` a versão mínima de que você precisa:
 
 ```json
-{ "FullName": "Meu Plugin", "Version": "1.0.0", "MinApiVersion": 5 }
+{ "FullName": "Meu Plugin", "Version": "1.0.0", "MinApiVersion": 6 }
 ```
 
 | situação | o que acontece |
 |---|---|
 | você usa só o que existe na v2, e declara `"MinApiVersion": 2` | roda em qualquer API v2 ou superior |
 | você usa `MensagemNaTela` (v3) mas declara 2 | o carregador deixa carregar, e o **seu** teste de `api->tamanho` é a última defesa |
-| você declara 5 e o servidor tem a v4 | o carregador **recusa antes de carregar** e diz qual versão falta |
+| você declara 6 e o servidor tem a v5 | o carregador **recusa antes de carregar** e diz qual versão falta |
 
 Por isso a checagem no começo do seu `ConanPluginCarregar` não é formalidade:
 
@@ -132,7 +152,7 @@ passa a ler memória errada em silêncio.
 {
   "FullName": "Meu Plugin",
   "Version": "1.0.0",
-  "MinApiVersion": 5,
+  "MinApiVersion": 6,
   "BuildDoJogo": 24784646,
   "UsaOffsetsCrus": true
 }
@@ -162,10 +182,10 @@ do número. Ele resolve pela reflexão, na build que estiver rodando.
 São coisas diferentes, e as duas aparecem em toda release:
 
 ```
-Conan-Api 2.4.0 — build 24784646
+Conan-Api 2.5.0 — build 24784646
 ```
 
-- **`2.4.0`** — a versão do projeto
+- **`2.5.0`** — a versão do projeto
 - **`build 24784646`** — a versão do **Conan Exiles** para a qual esta API serve
 
 A API conhece o jogo por endereços de memória daquela build. Quando a Funcom
@@ -421,6 +441,64 @@ global, e chamar quase qualquer coisa trava o processo inteiro. Faça tudo no
 
 ---
 
+## O jogo inteiro, com assinatura de verdade
+
+Além da tabela, o pacote traz o **`ConanSDK.h`**: as classes do Conan com os
+membros e as funções que a reflexão do jogo declara — 85% delas com assinatura
+completa, tipo e nome de cada parâmetro, conferidos contra o servidor rodando.
+
+```cpp
+#include "Conan/ConanSDK.h"
+
+void ConanPluginCarregar(const ConanApiTabela* api)
+{
+    ConanApi::UsarTabela(api);          // <- obrigatória, veja abaixo
+    ...
+    cm->TeleportPlayer(1000.0f, 2000.0f, 300.0f);
+    FVector onde = ator->K2_GetActorLocation();
+    cm->CheatSpawnItem(TemplateId, quantidade);
+}
+```
+
+**`ConanApi::UsarTabela(api)` é obrigatória.** O header não tem de onde tirar a
+tabela sozinho — ela chega no seu `ConanPluginCarregar`. Sem essa linha, toda
+chamada do SDK vira nada, silenciosamente; por isso a primeira delas avisa no
+`stderr` em vez de deixar você caçar o motivo.
+
+Parâmetro de **saída** vira referência, e a API copia o valor de volta:
+
+```cpp
+FHitResult batida{};
+ator->K2_SetActorLocation(destino, false, batida, true);
+```
+
+Texto de saída vira `char*` e capacidade — **decodificado**, não o ponteiro do
+jogo (que morre quando a chamada retorna):
+
+```cpp
+char nome[128];
+alguem->GetDisplayName(nome, sizeof(nome));
+```
+
+Lista de saída vira ponteiro, capacidade e contagem, com os **elementos**
+copiados:
+
+```cpp
+AActor* achados[32]; int quantos = 0;
+lib->AlgumaBuscaDeAtores(..., achados, 32, quantos);
+```
+
+**Você não linka nada.** O SDK inteiro roteia pela tabela — é por isso que ele
+funciona igual em MSVC, MinGW e clang. Se algum dia o seu projeto pedir uma
+`libconanapi.a`, algo está errado: não existe biblioteca nossa para você linkar.
+
+Os 15% restantes saem como template genérico, de propósito: são tipos que
+**carregam posse de memória do jogo** (`TArray<FString>`, `TMap`, delegates
+multicast). Passá-los por valor duplicaria ponteiros, e alguém liberaria duas
+vezes. Preferimos template sem tipo a assinatura que corrompe.
+
+---
+
 ## Falar com o jogador
 
 Isto existe desde a **v3** da tabela, e são três rotas diferentes:
@@ -458,6 +536,62 @@ Se precisar passar texto a uma função do jogo por conta própria, use
 com o motivo em `TextoRecusa`. Recusa não é falha: é a API se negando a fazer
 algo que executaria meia instrução um dia, corrompendo memória horas depois sem
 erro legível.
+
+---
+
+## Quando não funciona: onde olhar
+
+Dois arquivos respondem quase tudo, e ficam em `Conan-Api/Logs/`:
+
+| arquivo | o que ele conta |
+|---|---|
+| `ConanLoader.log` | quais plugins o carregador **viu**, quais **recusou** e por quê |
+| `ConanApi.log` | o que os plugins **escreveram** com `Log()`, e os avisos do motor |
+
+O carregador escreve o veredito de cada plugin com o motivo junto. Vale ler a
+linha inteira antes de qualquer outra coisa:
+
+```
+  [ok] MeuPlugin  "Meu Plugin"  v1.0.0  api>=6
+  [x]  Outro — exige API versao 7; esta instalacao e' a 6.
+  [x]  Terceiro — abriu, mas NAO exporta ConanPluginCarregar().
+```
+
+### Os enganos que mais aparecem
+
+**A DLL não abre.** Quase sempre é arquitetura (compilou x86 em vez de x64) ou o
+runtime da Microsoft faltando — `/MD` em vez de `/MT`. O log diz o código de erro
+do Windows; `193` é "não é uma aplicação Win32 válida", que na prática significa
+32 bits.
+
+**Abriu, mas nada acontece.** Verifique se o nome da pasta e o da DLL batem, e
+se você exportou `ConanPluginCarregar`. No MSVC, sem `extern "C"` o nome sai
+decorado e o carregador não acha:
+
+```bat
+dumpbin /exports MeuPlugin.dll | findstr ConanPlugin
+```
+
+Deve aparecer `ConanPluginCarregar`, não `?ConanPluginCarregar@@YAXPEBU...`.
+
+**Carregou, mas as chamadas do `ConanSDK.h` não fazem nada.** Faltou
+`ConanApi::UsarTabela(api)`. O aviso sai no `stderr` do servidor, que sob Wine
+cai no log do jogo, não no nosso.
+
+**A função responde `false` e você não sabe se rodou.** Use
+`UltimaChamadaExecutou()`: o jogo filtra chamadas em CDO, template de Blueprint
+e ator não inicializado, e nesses casos o retorno vem do bloco zerado. Sem esse
+sinal, "a função disse não" e "a função não rodou" viram o mesmo `false`.
+
+**Escreveu num campo e o cliente não vê.** O campo é replicado. Pergunte antes:
+
+```cpp
+const int32_t off = api->OffsetDoMembro(obj, "Campo");
+if (api->EhReplicado(obj, off) == 1) { /* chame a função do jogo, não escreva */ }
+```
+
+São 1.222 dos 36.210 membros desta build. `EscreverMembro` avisa uma vez por
+campo, com o nome.
 
 ---
 
