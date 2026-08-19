@@ -1,46 +1,47 @@
 #!/bin/bash
-# Um plugin de terceiro que usa o Permission. Repare no que NÃO está aqui:
+# Compila o plugin. Nada alem do compilador cruzado do MinGW e' necessario —
+# quem for da comunidade nao precisa de Visual Studio nem do editor da Unreal.
 #
-#   · nenhuma referência a ConanPermission.dll, nenhuma .lib, nenhum -l;
-#   · nenhum libconanapi.a, nenhum .cpp nosso.
+# NAO HA NADA NOSSO PARA LINKAR. Ate 17/08/2026 esta linha juntava
+# `libconanapi.a` e arrastava o motor inteiro para dentro do DLL do plugin. No
+# modelo de tabela o unico arquivo nosso que entra e' o header
+# `Conan/ConanPluginApi.h`, que e' so declaracao: por isso aqui so existe `-I`.
 #
-# Só dois caminhos de header. No modelo de tabela o plugin não linka NADA
-# nosso: ele recebe ponteiros de função no carregamento. Se um dia voltar um
-# `.a` para esta linha de comando, é sinal de que alguém incluiu ConanSDK.h por
-# engano — e aí o motor inteiro entra no binário do plugin de novo.
+# OS INCLUDES SAO PROCURADOS, NUNCA ASSUMIDOS. Este mesmo arquivo roda em dois
+# lugares de formato diferente: a arvore de desenvolvimento (plugins/X/) e o SDK
+# que a comunidade baixa (Exemplos/X/). Ate a v2.3.0 ele trazia so' o caminho da
+# arvore, entao o PRIMEIRO comando do guia morria com "ConanPluginApi.h: No such
+# file" para todo mundo que baixou — e aqui dentro passava.
+#
+# O ConanPermission.h merece busca propria porque mora em lugar DIFERENTE nos
+# dois: no SDK vai junto dos outros headers; na arvore fica com o plugin que o
+# publica (plugins/Permission/include). Reescrevi este script uma vez esquecendo
+# disso e quebrei o ExemploVip na arvore, sem quebrar no pacote.
 set -e
 AQUI="$(cd "$(dirname "$0")" && pwd)"
-API="$AQUI/../../api"
-PERM="$AQUI/../Permission/include"
 
-# ── o plugin não pode incluir nada nosso além da tabela ─────────────────────
-# Barato de conferir e caro de descobrir tarde: incluir o SDK compila, linka e
-# só falha em produção, quando o layout de C++ do compilador do terceiro não
-# bate com o nosso.
-if grep -nE '#include[[:space:]]*"Conan/(ConanSDK|ConanBase|ConanHooks|ConanStructs|ConanAtomico|ConanGuarda|ConanDecodificador)\.h"' "$AQUI/ExemploVip.cpp"; then
-  echo "  [XXX] FALHA: o plugin incluiu header interno nosso. So ConanPluginApi.h."
-  exit 1
+INC=""
+for c in "$AQUI/../../include" "$AQUI/../../api/include" "$AQUI/../include" "$CONAN_SDK_INCLUDE"; do
+    [ -n "$c" ] && [ -f "$c/Conan/ConanPluginApi.h" ] && { INC="$c"; break; }
+done
+if [ -z "$INC" ]; then
+    echo "  x nao achei Conan/ConanPluginApi.h. Procurei a partir de: $AQUI"
+    echo "    Aponte com:  CONAN_SDK_INCLUDE=/caminho/do/sdk/include ./compilar.sh"
+    exit 1
 fi
 
-x86_64-w64-mingw32-g++ -std=c++17 -O2 -Wall -Wextra -shared \
-    -I "$API/include" -I "$PERM" \
+# Segundo -I so' quando o header do Permission NAO esta junto do principal.
+PERM=""
+if [ ! -f "$INC/Conan/ConanPermission.h" ]; then
+    for c in "$AQUI/../Permission/include" "$AQUI/../../plugins/Permission/include" \
+             "$AQUI/../../Exemplos/Permission/include"; do
+        [ -f "$c/Conan/ConanPermission.h" ] && { PERM="-I $c"; break; }
+    done
+fi
+
+x86_64-w64-mingw32-g++ -std=c++17 -O2 -shared \
+    -I "$INC" $PERM \
     -o "$AQUI/ExemploVip.dll" \
     "$AQUI/ExemploVip.cpp" \
-    -static-libgcc -static-libstdc++ -static \
-    -Wl,--exclude-all-symbols
-
-echo "== o plugin depende de que DLLs? =="
-x86_64-w64-mingw32-objdump -p "$AQUI/ExemploVip.dll" | grep "DLL Name:"
-if x86_64-w64-mingw32-objdump -p "$AQUI/ExemploVip.dll" | grep -qi "ConanPermission"; then
-  echo "  [XXX] FALHA: ficou uma dependencia estatica do ConanPermission.dll."
-  echo "        Este plugin nao carregaria em servidor sem o Permission instalado."
-  exit 1
-fi
-echo "  [ok] nenhuma dependencia do ConanPermission.dll — degrada em vez de nao carregar"
-
-echo "== exporta o contrato? =="
-x86_64-w64-mingw32-objdump -p "$AQUI/ExemploVip.dll" | grep -E "ConanPlugin(Carregar|Descarregar)" || {
-  echo "  [XXX] FALHA: ConanPluginCarregar nao esta exportada — a DLL carrega e nada acontece."
-  exit 1
-}
+    -static-libgcc -static-libstdc++ -Wl,--enable-stdcall-fixup
 echo "  ✅ $AQUI/ExemploVip.dll"

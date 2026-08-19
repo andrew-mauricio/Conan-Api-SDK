@@ -95,7 +95,7 @@ da Microsoft pode não estar instalado.
 O header traz um número:
 
 ```c
-#define CONAN_API_VERSAO 3
+#define CONAN_API_VERSAO 5
 ```
 
 Ele sobe quando **funções novas são acrescentadas** — e elas entram sempre no
@@ -105,14 +105,14 @@ plugin compilado hoje continuar valendo amanhã.
 Declare no seu `PluginInfo.json` a versão mínima de que você precisa:
 
 ```json
-{ "FullName": "Meu Plugin", "Version": "1.0.0", "MinApiVersion": 3 }
+{ "FullName": "Meu Plugin", "Version": "1.0.0", "MinApiVersion": 5 }
 ```
 
 | situação | o que acontece |
 |---|---|
 | você usa só o que existe na v2, e declara `"MinApiVersion": 2` | roda em qualquer API v2 ou superior |
 | você usa `MensagemNaTela` (v3) mas declara 2 | o carregador deixa carregar, e o **seu** teste de `api->tamanho` é a última defesa |
-| você declara 3 e o servidor tem a v2 | o carregador **recusa antes de carregar** e diz qual versão falta |
+| você declara 5 e o servidor tem a v4 | o carregador **recusa antes de carregar** e diz qual versão falta |
 
 Por isso a checagem no começo do seu `ConanPluginCarregar` não é formalidade:
 
@@ -123,15 +123,49 @@ if (!api || api->tamanho < sizeof(ConanApiTabela)) return;
 Sem ela, um plugin compilado contra uma tabela maior lê ponteiro além do fim da
 struct e chama lixo, num servidor com API mais velha.
 
+### Se o seu plugin usa offset cru, DECLARE
+
+Esta é a diferença entre um plugin que sobrevive a um patch da Funcom e um que
+passa a ler memória errada em silêncio.
+
+```json
+{
+  "FullName": "Meu Plugin",
+  "Version": "1.0.0",
+  "MinApiVersion": 5,
+  "BuildDoJogo": 24784646,
+  "UsaOffsetsCrus": true
+}
+```
+
+| o que você declara | o que o carregador faz quando o jogo atualiza |
+|---|---|
+| `UsaOffsetsCrus: true` + `BuildDoJogo` | **recusa carregar** e diz para pedir a versão nova ao autor |
+| `UsaOffsetsCrus: true` sem `BuildDoJogo` | recusa — declaração que não diz nada não é checagem |
+| só `BuildDoJogo` | carrega, e registra no log que a build mudou |
+| nada | carrega — é o certo se você só usa a tabela |
+
+**Por que isso é seu problema e não nosso:** a API se recusa a carregar numa
+build que não conhece, de propósito. O seu plugin não tem essa porta a menos que
+você a peça — e nós não temos como adivinhar se o `0x068` que você escreveu é um
+offset do jogo ou uma constante sua.
+
+O sintoma de errar aqui é o pior que existe: **nenhum erro.** O plugin carrega,
+roda, e lê o campo vizinho. O dono do servidor vê comportamento estranho semanas
+depois e não tem como ligar ao seu plugin.
+
+**Como não precisar disso:** use `OffsetDoMembro(obj, "NomeDoCampo")` (v5) em vez
+do número. Ele resolve pela reflexão, na build que estiver rodando.
+
 ### A versão da API e a BUILD DO JOGO
 
 São coisas diferentes, e as duas aparecem em toda release:
 
 ```
-Conan-Api — build 24784646
+Conan-Api 2.4.0 — build 24784646
 ```
 
-- **`1.1.0`** — a versão do projeto
+- **`2.4.0`** — a versão do projeto
 - **`build 24784646`** — a versão do **Conan Exiles** para a qual esta API serve
 
 A API conhece o jogo por endereços de memória daquela build. Quando a Funcom
@@ -186,7 +220,8 @@ de DLL do compilador que não vai estar no servidor.
 ```bash
 cp -r Exemplos/ExemploOla MeuPlugin
 cd MeuPlugin
-# renomeie o .cpp e ajuste as duas linhas do compilar.sh que citam ExemploOla
+mv ExemploOla.cpp MeuPlugin.cpp
+sed -i 's/ExemploOla/MeuPlugin/g' compilar.sh
 ./compilar.sh
 ```
 
@@ -320,6 +355,56 @@ vez. É o caminho que ninguém exercita e é o que roda no pior dia do dono.
 
 ---
 
+## O que o seu hook recebe
+
+O guia usa `c->Parms` nos exemplos, mas a struct tem mais — e `c->Obj` é o que
+falta na maioria dos plugins:
+
+```c
+typedef struct ConanChamada {
+    void*    Obj;         // o UObject que recebeu a chamada  <- quem, no jogo
+    void*    Func;        // a UFunction
+    void*    Parms;       // bloco de parâmetros (pode ser NULL)
+    uint32_t ParmsSize;
+    int32_t  NomeIndice;  // FName.ComparisonIndex — comparação O(1)
+    int32_t  NomeNumero;
+} ConanChamada;
+```
+
+Num hook de `ServerSendChatMessage`, `c->Obj` é o `ConanPlayerController` de
+quem falou. É ele que você passa para `MensagemNaTela` e para o `Permission`.
+
+**Não guarde `c->Obj` entre chamadas.** O coletor de lixo do jogo pode destruir
+o objeto e reaproveitar o endereço; `Legivel` continuaria dizendo 1, porque a
+página segue mapeada, e você agiria sobre outra coisa. Pegue-o de novo em cada
+hook.
+
+## Contar quem está online
+
+```cpp
+void* achados[128];
+int n = g_api->FindObjects("ConanPlayerController", achados, 128, /*incluirFilhas=*/1);
+```
+
+O último parâmetro não é decoração: sem `incluirFilhas`, subclasses ficam de
+fora e a contagem sai menor do que a realidade. E `FindObject` (singular) é
+outra pergunta — devolve **o primeiro**, então com dois jogadores no servidor
+você enxergaria um só.
+
+## O retorno de HookProcessEvent: zero é FALHA
+
+```cpp
+uint32_t id = g_api->HookProcessEvent("ServerSendChatMessage", AoFalar, nullptr, 100);
+if (id == 0)
+    g_api->Log("nao consegui hookar o chat");   // o motivo já está no log
+```
+
+Ele devolve o **id do hook**, não um código de erro. `0` significa que falhou —
+o contrário do reflexo `0 == ok` que a maioria de nós tem em C. Guarde o id se
+pretende chamar `RemoverHook`.
+
+---
+
 ## O contrato
 
 ```cpp
@@ -336,14 +421,38 @@ global, e chamar quase qualquer coisa trava o processo inteiro. Faça tudo no
 
 ---
 
-## O que a API NÃO deixa você fazer, e por quê
+## Falar com o jogador
 
-**Mandar texto para o jogo.** Você pode ler texto que já é do jogo
-(`LerTextoDoJogo`) e alterar o que passa por um hook. Mas montar uma `FString`
-sua e passá-la ao jogo **derruba o servidor**: `ProcessEvent` destrói o bloco de
-parâmetros ao retornar e chama o alocador *do jogo* sobre um ponteiro da sua
-pilha. Isso foi testado, não é suposição. Para falar com o dono do servidor, use
-`Log`.
+Isto existe desde a **v3** da tabela, e são três rotas diferentes:
+
+```cpp
+g_api->MensagemParaTodos("O servidor reinicia em 5 minutos.");
+g_api->MensagemParaJogador("NomeDoJogador", "Kit entregue. Volte em 24h.");
+g_api->MensagemNaTela(playerController, "Bem-vindo!", 8.0f);
+```
+
+**Repare em quem cada uma endereça** — é o engano mais fácil de cometer:
+
+| função | recebe | de onde vem |
+|---|---|---|
+| `MensagemParaTodos` | nada | — |
+| `MensagemParaJogador` | **o nome**, `const char*` | `userName`, offset `0x048` do chat |
+| `MensagemNaTela` | **o controller**, `void*` | `c->Obj` no hook, ou `LerParm` no login |
+
+Passar o controller para `MensagemParaJogador` não compila (o tipo salva você).
+Mas num hook de chat você tem o `ChatRpcData`, e é de lá que sai o nome.
+
+`MensagemParaJogador` devolve **0 se o jogador não estiver conectado** — trate
+isso, porque ele pode ter saído entre o comando e a resposta.
+
+### O que continua proibido
+
+**Montar uma `FString` sua e passá-la ao jogo.** Isso **derruba o servidor**:
+`ProcessEvent` destrói o bloco de parâmetros ao retornar e chama o alocador *do
+jogo* sobre um ponteiro da sua pilha. Foi medido aqui, não é suposição — e é
+justamente por isso que as funções acima existem: elas pedem ao jogo que aloque.
+Se precisar passar texto a uma função do jogo por conta própria, use
+`CriarTextoDoJogo` (v4), que devolve 16 bytes que o jogo possui.
 
 **Hookar qualquer endereço.** `HookFuncao` **recusa** cerca de 32% das funções,
 com o motivo em `TextoRecusa`. Recusa não é falha: é a API se negando a fazer

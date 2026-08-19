@@ -41,7 +41,7 @@ fi
 
 x86_64-w64-mingw32-g++ -std=c++17 -O2 -shared \
     -I "$INC" $PERM \
-    -o "$AQUI/ExemploAgendado.dll" \
-    "$AQUI/ExemploAgendado.cpp" \
+    -o "$AQUI/ExemploVigia.dll" \
+    "$AQUI/ExemploVigia.cpp" \
     -static-libgcc -static-libstdc++ -Wl,--enable-stdcall-fixup
-echo "  ✅ $AQUI/ExemploAgendado.dll"
+echo "  ✅ $AQUI/ExemploVigia.dll"
