@@ -1,26 +1,34 @@
-# O que está sob qual licença
+# What is under which licence
 
-Este repositório — o **SDK** — está sob **MIT**. Isso vale para tudo que há
-aqui: os headers, o `ConanSDK.h`, os exemplos e o Permission.
+This repository — the **SDK** — is **MIT**. That covers everything here: the
+headers, `ConanSDK.h`, the examples and Permission.
 
-**Na prática, para você:** compile, altere, publique, **venda**. Sem pedir
-autorização, sem pagar nada, sem dividir nada. O plugin é seu e a licença dele
-é escolha sua.
+**In practice, for you:** compile it, change it, publish it, **sell it**. No
+permission to ask for, nothing to pay, nothing to share back. The plugin is
+yours and its licence is your choice.
 
-## E o loader?
+## And the runtime?
 
-O **[Conan-Api](../../../Conan-Api)** — o carregador, o motor e os binários que
-rodam no servidor — está sob **licença própria**, e ela é restritiva num ponto:
-a API não pode ser revendida, re-hospedada nem incluída em pacote comercial.
+**[Conan-Api](https://github.com/andrew-mauricio/Conan-Api)** — the loader, the
+runtime and the binaries that run on the server — is under **its own licence**,
+which is restrictive on one point: the API may not be resold, re-hosted, or
+bundled into a commercial package.
 
-Isso não te afeta enquanto você escreve plugins. Nenhuma linha do motor entra no
-seu binário: você fala com uma tabela de ponteiros de função, e é por isso que o
-header pode ser MIT sem contaminar nada.
+That does not affect you while you write plugins. Not one line of the runtime
+ends up in your binary: you talk to a table of function pointers at runtime,
+which is exactly why these headers can be MIT without any of it spreading to
+your code.
 
-## Por que a divisão existe
+## Why the split exists
 
-O que você constrói é seu. A fundação fica com quem a mantém, para que exista
-**uma** API com um caminho de atualização quando o jogo muda — em vez de cinco
-cópias divergentes que ninguém consegue acompanhar.
+What you build is yours. The foundation stays with whoever maintains it, so that
+there is **one** API with an upgrade path when the game changes — instead of five
+diverging copies nobody can keep track of.
 
-O link deste repositório é livre: divulgue e indexe onde quiser.
+The link to this repository is free: share and index it wherever you like.
+
+---
+
+**Conan-Api is an independent, community-developed project. It is not affiliated
+with, endorsed by, sponsored by, or supported by Funcom or Inflexion Games.**
+*Conan Exiles* and all related marks are the property of Funcom.
