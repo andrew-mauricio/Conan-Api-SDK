@@ -83,26 +83,28 @@
   #define CONAN_ALLOCA(n) alloca(n)
 #endif
 
-// ── convenção de chamada ────────────────────────────────────────────────────
+// ── calling convention ──────────────────────────────────────────────────────
 //
-// No x64 do Windows existe UMA convenção nativa só. `__fastcall` não muda nada
-// ali: o MinGW aceita em silêncio, o MSVC aceita mas AVISA que ignorou, e num
-// projeto que a comunidade vai compilar, aviso do compilador é ruído que faz
-// gente parar e perguntar se está errado. Deixar vazio diz a verdade.
+// On Windows x64 there is only ONE native convention. `__fastcall` changes
+// nothing there: MinGW accepts it silently, MSVC accepts it but WARNS that it
+// ignored it, and in a project the community will compile, a compiler warning
+// is noise that makes people stop and wonder whether something is wrong.
+// Leaving it empty tells the truth.
 #define CONAN_CALL
 
-// Declaradas ANTES do namespace: se `class UClass*` aparecesse só dentro de
-// ConanApi, o compilador criaria ConanApi::UClass e os headers gerados (que
-// usam ::UClass) não enxergariam o mesmo tipo.
+// Declared BEFORE the namespace: if `class UClass*` only appeared inside
+// ConanApi, the compiler would create ConanApi::UClass and the generated headers
+// (which use ::UClass) wouldn't see the same type.
 class UObject;
 class UClass;
 class UFunction;
 
 namespace ConanApi
 {
-    // Declaradas ANTES de Call(), que as usa. Num template, nome que não depende
-    // de parâmetro de template é resolvido na definição — declarar depois dá
-    // erro, e o erro aponta para a linha do uso, não para a causa.
+    // Declared BEFORE Call(), which uses them. In a template, a name that
+    // doesn't depend on a template parameter is resolved at definition time;
+    // declaring it later is an error, and the error points at the line of use,
+    // not at the cause.
     void Log(const char* fmt, ...);
 
     // ── did the last call actually execute? ─────────────────────────────────
@@ -131,13 +133,14 @@ namespace ConanApi
     bool UltimaChamadaExecutou();
     void MarcarExecucao(bool ok);
 
-    // ── o que a reflexão precisa saber de uma função para poder chamá-la ────
+    // ── what reflection needs to know about a function to be able to call it ─
     //
-    // Resolver isso custa caminhar a hierarquia de classes e a cadeia de
-    // propriedades. Feito UMA vez por (classe, nome) e guardado — chamada em
-    // laço de jogo não pode pagar busca.
-    // Quantos parâmetros cabem na ficha. Quem preenche deriva o teto de
-    // `sizeof(Offset)/sizeof(Offset[0])`, então este número manda sozinho.
+    // Working that out costs walking the class hierarchy and the property chain.
+    // Done ONCE per (class, name) and cached: a call in the game loop can't pay
+    // for a lookup.
+    // How many parameters fit in the record. Whoever fills it derives the
+    // ceiling from `sizeof(Offset)/sizeof(Offset[0])`, so this number rules on
+    // its own.
     constexpr int MAX_PARMS = 24;
 
     struct FuncInfo
@@ -182,15 +185,15 @@ namespace ConanApi
     const FuncInfo*  ResolveFunction(void* obj, const char* nome);
     void             InvokeRaw(void* obj, void* function, void* parms);
 
-    // ── achar objetos vivos ─────────────────────────────────────────────────
+    // ── finding live objects ────────────────────────────────────────────────
     //
-    // Sem isto os headers são só um mapa: o plugin sabe ler qualquer membro de
-    // qualquer classe e não tem de onde tirar o primeiro ponteiro. É por aqui
-    // que um plugin começa — pega o GameMode, a lista de PlayerControllers, os
-    // Actors de um tipo — e daí navega pelo resto.
+    // Without this the headers are just a map: the plugin knows how to read any
+    // member of any class and has nowhere to get its first pointer. This is
+    // where a plugin starts — grab the GameMode, the list of PlayerControllers,
+    // the Actors of a type — and navigates the rest from there.
     //
-    // Varrer o GUObjectArray custa: são 1,5 milhão de objetos num servidor
-    // cheio. Chame no arranque ou de tempos em tempos, nunca a cada tick.
+    // Walking the global object array costs: there are 1.5 million objects on a
+    // busy server. Call it at startup or occasionally, never every tick.
     int      NumObjects();
     UObject* GetObjectByIndex(int i);
 
@@ -204,47 +207,48 @@ namespace ConanApi
     // o objeto padrão da classe (CDO) — existe mesmo sem instância no mundo
     UObject* GetDefaultObject(const char* nomeClasse);
 
-    // ── ferramentas de baixo nível ──────────────────────────────────────────
-    // Expostas porque plugin de DESCOBERTA precisa delas: decodificar um FName
-    // que a API ainda não modela, ou conferir se um ponteiro é seguro antes de
-    // seguir. Plugin comum não precisa tocar nisto.
+    // ── low-level tools ─────────────────────────────────────────────────────
+    // Exposed because a DISCOVERY plugin needs them: decoding an FName the API
+    // doesn't model yet, or checking whether a pointer is safe before following
+    // it. An ordinary plugin never has to touch these.
     std::string NomeDeFName(int32_t indice);
 
-    // Acha o FName (índice + Number) de uma função com este nome, em qualquer
-    // classe. Serve para VALIDAR o nome antes de registrar um hook: nome escrito
-    // errado produz um hook que nunca dispara, e é o defeito mais silencioso que
-    // existe neste terreno.
+    // Finds the FName (index + Number) of a function with this name, on any
+    // class. Use it to VALIDATE a name before registering a hook: a misspelled
+    // name produces a hook that never fires, which is the quietest defect in
+    // this territory.
     bool AcharFNameDeFuncao(const char* nome, int32_t* indice, int32_t* numero);
 
-    // ── versão C de Call<>, para a tabela que o plugin recebe ───────────────
+    // ── the C version of Call<>, for the table the plugin receives ──────────
     //
-    // Mesma coisa que Call<>, com argumentos em vetor em vez de template: o
-    // plugin é C e não instancia template nosso. Confere o tamanho de cada
-    // argumento contra o parâmetro real e RECUSA quando não bate.
+    // Same as Call<>, with arguments in an array instead of a template: the
+    // plugin is C and doesn't instantiate templates of ours. It checks each
+    // argument's size against the real parameter and REFUSES on mismatch.
     bool ChamarPorTabela(void* obj, const char* nome,
                          const void** args, const uint32_t* tams, int nargs,
                          void* retorno, uint32_t tamRetorno);
 
-    // Mesma coisa, com os slots de SAIDA. Declarada aqui e definida no
-    // ConanApi.cpp: e' o motor. O plugin nao chama isto direto — chega nela
-    // pela tabela (ChamarFuncaoEx), que e' o que permite ao ConanSDK.h
-    // funcionar sem linkar biblioteca nossa.
+    // Same again, with the OUTPUT slots. Declared here and defined on the
+    // runtime side. A plugin never calls this directly: it reaches it through
+    // the table (ChamarFuncaoEx), which is what lets ConanSDK.h work without
+    // linking a library of ours.
     bool ChamarPorTabelaEx(void* obj, const char* nome,
                            const void** args, const uint32_t* tams, int nargs,
                            const ConanSaida* saidas, int nsaidas,
                            void* retorno, uint32_t tamRetorno);
     bool        Legivel(const void* p, size_t n);
 
-    // "Dá para ESCREVER aqui?" — pergunta diferente de Legivel(), e a diferença
-    // derruba servidor: PAGE_READONLY passa em Legivel e falha no memcpy.
+    // "Can I WRITE here?" — a different question from Legivel(), and the
+    // difference crashes servers: PAGE_READONLY passes Legivel and fails the
+    // memcpy.
     bool        Gravavel(void* p, size_t n);
 
-    // Falar com o jogador. Monta a FString com memória DO JOGO (o jogo aloca,
-    // nós sobrescrevemos), que é o que impede a queda ao ProcessEvent destruir
-    // o bloco de parâmetros.
+    // Talking to the player. Builds the FString with THE GAME's memory (the game
+    // allocates, we overwrite), which is what prevents the crash when
+    // ProcessEvent destroys the parameter block.
     bool        MensagemParaTodos(const char* texto);
     bool        MensagemParaJogador(const char* nomeDoJogador, const char* texto);
-    // Na TELA do jogador (não no chat). `playerController` é o dele.
+    // On the player's SCREEN (not in chat). `playerController` is theirs.
     bool        MensagemNaTela(void* playerController, const char* texto, float segundos);
 
     // ── onde o plugin guarda as coisas dele ─────────────────────────────────
@@ -266,20 +270,21 @@ namespace ConanApi
     const char* CaminhoConfig(const char* plugin);   // .../Config/<plugin>.json
     // ── paths: ONE FOLDER PER PLUGIN ────────────────────────────────────────
     //
-    // Cada plugin mora em Conan-Api\\Plugins\\<SeuPlugin>\\ e guarda tudo ali:
+    // Each plugin lives in Conan-Api\\Plugins\\<YourPlugin>\\ and keeps
+    // everything there:
     //
-    //     CaminhoConfig("SeuPlugin")                 -> .../Plugins/SeuPlugin/config.json
-    //     CaminhoDados("SeuPlugin", "banco.db")      -> .../Plugins/SeuPlugin/banco.db
+    //     CaminhoConfig("YourPlugin")               -> .../Plugins/YourPlugin/config.json
+    //     CaminhoDados("YourPlugin", "db.db")       -> .../Plugins/YourPlugin/db.db
     //
-    // O nome que você passa é o da PASTA. Se ela não existir, cai no esquema
-    // antigo (Config\ e Dados\ globais) em vez de devolver caminho inexistente —
-    // instalação antiga continua funcionando.
+    // The name you pass is the FOLDER's. If it doesn't exist, it falls back to
+    // the old layout (global Config\ and Dados\) instead of returning a path
+    // that isn't there, so an older installation keeps working.
     const char* CaminhoConfig(const char* plugin);
     const char* CaminhoDados(const char* plugin, const char* arquivo);
     const char* CaminhoDados(const char* arquivo);   // antiga: .../Dados/<arquivo>
 
-    // ── registro de plugin ──────────────────────────────────────────────────
-    // O loader chama isto; o plugin não precisa saber como foi carregado.
+    // ── plugin registration ─────────────────────────────────────────────────
+    // The loader calls this; the plugin needn't know how it was loaded.
     void     Log(const char* fmt, ...);
     bool     Pronta();          // as âncoras conferiram? só então é seguro usar
 
@@ -350,24 +355,22 @@ namespace ConanApi
 
     // ── empacotar os argumentos no bloco de parâmetros ──────────────────────
     //
-    // Devolve `false` quando ALGUM argumento não coube. Quem chama aborta a
-    // chamada inteira: empacotar o que deu e chamar assim mesmo seria trocar
-    // corrupção de pilha por um argumento zerado — a função rodaria e devolveria
-    // um resultado plausível e falso, que é o defeito que esta API existe para
-    // matar.
-    // Monta uma FString com memoria do JOGO. 16 bytes: {wchar_t* Data; int32
-    // Num; int32 Max}. Ver o comentario em ConanApi.cpp — o plugin nunca pode
-    // montar isso sozinho (I-2).
+    // Returns `false` when ANY argument didn't fit. The caller aborts the whole
+    // call: packing what worked and calling anyway would trade stack corruption
+    // for a zeroed argument, and the function would run and return a plausible
+    // false result, which is the defect this API exists to kill.
+    // Builds an FString with the GAME's memory. 16 bytes: {wchar_t* Data; int32
+    // Num; int32 Max}. A plugin can never build this on its own.
     bool CriarTextoDoJogo(const char* texto, void* destino16Bytes);
 
-    // ── TEXTO COMO ARGUMENTO ────────────────────────────────────────────────
+    // ── TEXT AS AN ARGUMENT ─────────────────────────────────────────────────
     //
-    // O que o plugin escreve:      ator->SetNome(ConanApi::Texto("Andrew"));
-    // O que chega ao jogo:         uma FString que o JOGO alocou.
+    // What the plugin writes:    actor->SetName(ConanApi::Texto("Andrew"));
+    // What reaches the game:     an FString the GAME allocated.
     //
-    // O tempo de vida e' o da expressao da chamada, que basta: o jogo copia ou
-    // consome durante o ProcessEvent, e destroi o bloco ao retornar.
-    // FText: o mesmo principio, um passo a mais. Ver ConanApi.cpp.
+    // The lifetime is that of the call expression, which is enough: the game
+    // copies or consumes during ProcessEvent, and destroys the block on return.
+    // FText: same principle, one step further.
     bool CriarTextoRicoDoJogo(const char* texto, void* destino16Bytes);
 
     // ── TEXTO RICO (FText) COMO ARGUMENTO ───────────────────────────────────
@@ -436,8 +439,8 @@ namespace ConanApi
     //
     // POR QUE E' UM TIPO SEPARADO DO Fora<T>
     // --------------------------------------
-    // Fora<T> copia sizeof(T) bytes do slot para o destino. Isso esta certo para
-    // int, float, FVector, and WRONG for FString: copying those 16 bytes would
+    // Fora<T> copies sizeof(T) bytes from the slot into the destination. That's
+    // right for int, float, FVector, and WRONG for FString: copying those 16 bytes would
     // hand the plugin a pointer into the GAME's memory, which ProcessEvent
     // destroys on return. The plugin would be left holding a dangling pointer
     // and reading freed memory, which is worse than not having the output.
@@ -462,35 +465,34 @@ namespace ConanApi
     // first second instead of after the loader activates the plugins.
     void DrenarPendentes();
 
-    // ── MEMBRO POR NOME, RESOLVIDO EM RUNTIME ───────────────────────────────
+    // ── A MEMBER BY NAME, RESOLVED AT RUNTIME ───────────────────────────────
     //
-    // Devolve o offset do membro nesta build, ou -1 se nao achar. Sobe a
-    // hierarquia e guarda em cache por (classe, nome).
+    // Returns the member's offset on this build, or -1 if not found. Walks up
+    // the hierarchy and caches per (class, name).
     //
-    // POR QUE ISTO IMPORTA MAIS DO QUE PARECE: com resolucao por nome, a
-    // superficie que uma atualizacao do jogo quebra deixa de ser 36.210 offsets
-    // gravados e passa a ser CINCO ponteiros (GUObjectArray, FNamePool,
-    // ProcessEvent, ProcessInternal e o layout da FField). O resto e' derivado.
+    // WHY THIS MATTERS MORE THAN IT LOOKS: with name resolution, the surface a
+    // game update breaks stops being 36,210 hardcoded offsets and becomes a
+    // handful of anchor pointers. Everything else is derived from those.
     //
-    // -1 NUNCA e' confundido com offset 0, que e' legitimo.
+    // -1 is NEVER confused with offset 0, which is legitimate.
     int32_t OffsetDoMembro(void* objeto, const char* nome,
                            uint32_t* tamanho = nullptr, uint64_t* flags = nullptr);
 
-    // 1 replicado · 0 nao · -1 nao sei. Os tres estados importam: -1 NAO e
-    // "pode escrever". Ver o comentario em ConanApi.cpp.
+    // 1 replicated · 0 not · -1 don't know. All three states matter: -1 is NOT
+    // "safe to write".
     int  EhReplicadoPorNome(void* objeto, const char* nome);
     int  EhReplicadoPorOffset(void* objeto, uint32_t offset);
     bool NomeDoMembroNoOffset(void* objeto, uint32_t offset, char* saida, int tam);
 
     int TextoDeSlot(const void* slot16Bytes, char* saida, int tam);
 
-    // FText do slot -> char*, passando pelo Conv_TextToString do jogo. Ver
-    // ConanApi.cpp: FText nao guarda caracteres, guarda referencia contada.
+    // FText from the slot -> char*, going through the game's Conv_TextToString.
+    // An FText doesn't hold characters; it holds a counted reference.
     int TextoRicoDeSlot(const void* slot16Bytes, char* saida, int tam);
 
-    // Saida de FText. Separado do ForaTexto porque a decodificacao passa por
-    // uma chamada a mais no jogo — e confundir os dois daria texto vazio sem
-    // dizer por que.
+    // FText output. Kept separate from ForaTexto because decoding goes through
+    // one more call into the game, and confusing the two would produce empty
+    // text without saying why.
     struct ForaTextoRico
     {
         char* destino;
@@ -507,22 +509,22 @@ namespace ConanApi
     };
     inline ForaTexto ParaForaTexto(char* d, int t) { return ForaTexto(d, t); }
 
-    // ── ENTRADA E SAIDA AO MESMO TEMPO: EntreSai<T> ─────────────────────────
+    // ── INPUT AND OUTPUT AT ONCE: EntreSai<T> ───────────────────────────────
     //
-    // POR QUE ISTO PRECISOU EXISTIR
-    // ------------------------------
-    // 4.777 parametros desta build tem CPF_OutParm E CPF_ReferenceParm: o
-    // `UPARAM(ref)` da Unreal. Eles chegam por referencia JA PREENCHIDOS pelo
-    // chamador, e a funcao pode escrever de volta.
+    // WHY THIS HAD TO EXIST
+    // ---------------------
+    // 4,777 parameters on this build carry both CPF_OutParm AND
+    // CPF_ReferenceParm: Unreal's `UPARAM(ref)`. They arrive by reference
+    // ALREADY FILLED IN by the caller, and the function may write back.
     //
-    // Ate 19/08/2026 eles eram classificados como saida PURA — e a consequencia
-    // era silenciosa: em BoxOverlapActors, o filtro de tipos e a lista de atores
-    // a ignorar sao desses. Tratados como saida, o plugin nao tinha como
-    // passa-los, a busca rodava sem filtro nenhum, e o resultado parecia
-    // legitimo. Nenhum erro, nenhum log.
+    // Until 2026-08-19 they were classified as PURE output, and the consequence
+    // was silent: in BoxOverlapActors, the type filter and the list of actors to
+    // ignore are two of them. Treated as output, the plugin had no way to pass
+    // them, the search ran with no filter at all, and the result looked
+    // legitimate. No error, no log.
     //
-    // EntreSai<T> escreve o valor do plugin no slot ANTES da chamada e copia de
-    // volta DEPOIS. E' o unico jeito de honrar os dois lados.
+    // EntreSai<T> writes the plugin's value into the slot BEFORE the call and
+    // copies it back AFTER. It's the only way to honour both sides.
     template<typename T>
     struct EntreSai
     {
@@ -596,19 +598,19 @@ namespace ConanApi
         explicit Fora(T& d) : destino(&d) {}
     };
 
-    // ── O RETORNO QUE NAO CABE NUM RETORNO ──────────────────────────────────
+    // ── THE RETURN THAT DOESN'T FIT IN A RETURN ─────────────────────────────
     //
-    // Funcao que devolve FString/FText/TArray nao pode ter isso como valor de
-    // retorno em C++: sao 16 bytes com ponteiro do jogo dentro, que morre
-    // quando o ProcessEvent destroi o bloco. Devolve-los seria entregar um
-    // ponteiro pendurado — e o sintoma apareceria longe daqui.
+    // A function returning FString/FText/TArray can't have that as a C++ return
+    // value: they're 16 bytes with the game's pointer inside, which dies when
+    // ProcessEvent destroys the block. Returning them would hand back a dangling
+    // pointer, and the symptom would surface far from here.
     //
-    // Sao 1.125 funcoes desta build (365 FString + 219 FText + 541 TArray).
-    // Todas ficavam genericas por causa disso.
+    // That's 1,125 functions on this build (365 FString + 219 FText + 541
+    // TArray). All of them came out generic because of it.
     //
-    // A saida e' a mesma dos parametros de saida: decodificar na janela em que
-    // o dado vale. Estes envelopes marcam "este destino e' o RETORNO", e o
-    // motor traduz para OffsetRetorno.
+    // The way out is the same as for output parameters: decode inside the window
+    // where the data is valid. These wrappers mark "this destination is the
+    // RETURN", and the runtime translates that to the return offset.
     struct RetornoTexto
     {
         char* destino; int tam;
@@ -635,20 +637,20 @@ namespace ConanApi
     inline RetornoLista<T> ParaRetornoLista(T* d, int cap, int& n)
     { return RetornoLista<T>(d, cap, n); }
 
-    // ── UPARAM(ref) DE TEXTO: entra E volta no mesmo buffer ─────────────────
+    // ── UPARAM(ref) OF TEXT: goes in AND comes back in the same buffer ──────
     //
-    // Sao 1.399 funcoes desta build — o maior grupo de genericas depois que os
-    // motivos passaram a ser precisos. Antes ficavam escondidas sob o rotulo
-    // "tem N parametros de SAIDA", que dizia que HA saida e nao POR QUE ela
-    // nao podia ser expressa.
+    // 1,399 functions on this build — the largest group of generics once the
+    // reasons became precise. They used to hide under the label "has N OUTPUT
+    // parameters", which said THAT there was output, not WHY it couldn't be
+    // expressed.
     //
-    // As duas metades ja' existiam separadas:
-    //   `Texto`     monta uma FString com memoria do JOGO a partir de char*
-    //   `ForaTexto` decodifica um slot de FString de volta para char*
+    // Both halves already existed separately:
+    //   `Texto`     builds an FString with the GAME's memory from a char*
+    //   `ForaTexto` decodes an FString slot back into a char*
     //
-    // Um UPARAM(ref) de FString e' exatamente as duas, no MESMO slot: escreve
-    // antes, le' depois. O envelope abaixo so' junta o par — nao ha mecanismo
-    // novo, e por isso nao ha risco novo de posse.
+    // A UPARAM(ref) FString is exactly those two, on the SAME slot: write
+    // before, read after. The wrapper below just joins the pair. There's no new
+    // mechanism, and therefore no new ownership risk.
     struct EntreSaiTexto
     {
         Texto entrada;      // a FString do jogo, ja' montada
@@ -660,8 +662,9 @@ namespace ConanApi
     inline EntreSaiTexto ParaEntreSaiTexto(char* buf, int tam)
     { return EntreSaiTexto(buf, tam); }
 
-    // O mesmo par, para FText: TextoRico monta pelo Conv_StringToText do jogo,
-    // e a volta passa pelo Conv_TextToString. Sao 193 funcoes.
+    // The same pair, for FText: TextoRico builds through the game's
+    // Conv_StringToText, and the way back goes through Conv_TextToString. 193
+    // functions.
     struct EntreSaiTextoRico
     {
         TextoRico entrada;
@@ -674,9 +677,9 @@ namespace ConanApi
     { return EntreSaiTextoRico(buf, tam); }
     template<typename T> inline Fora<T> ParaFora(T& d) { return Fora<T>(d); }
 
-    // Onde copiar de volta, e quanto. Preenchido pelo Empacotar, consumido pelo
-    // Call. MAX_PARMS entradas bastam: nao ha como haver mais saidas que
-    // parametros.
+    // Where to copy back, and how much. Filled by Empacotar, consumed by Call.
+    // MAX_PARMS entries are enough: there can't be more outputs than
+    // parameters.
     struct SaidasPendentes
     {
         void*    destino[MAX_PARMS];
@@ -702,9 +705,9 @@ namespace ConanApi
                           T&& v, R&&... resto)
     {
         bool ok = true;
-        // Argumento a mais do que a função aceita é ignorado em vez de escrever
-        // fora do bloco: um plugin da comunidade com a assinatura errada tem de
-        // falhar em silêncio, nunca corromper a pilha do servidor.
+        // An argument beyond what the function accepts is ignored rather than
+        // written past the block: a community plugin with the wrong signature
+        // has to fail quietly, never corrupt the server's stack.
         if (i < int(fi->NumEntrada) && i < MAX_PARMS)
         {
             using U = typename std::decay<T>::type;
@@ -712,9 +715,10 @@ namespace ConanApi
             const uint32_t limite = EspacoNoBloco(fi, off);
             const uint32_t medido = fi->Tamanho[i];      // 0 = não medido
 
-            // Duas reprovações, e nenhuma delas confia na outra:
-            //  · não CABE  — escreveria fora do parâmetro (ou fora do bloco);
-            //  · não BATE  — cabe, mas o tamanho medido diz que é outro tipo.
+            // Two rejections, and neither trusts the other:
+            //  · doesn't FIT   — would write past the parameter (or the block);
+            //  · doesn't MATCH — fits, but the measured size says it's another
+            //                    type.
             const bool cabe = (sizeof(U) <= limite);
             const bool bate = (medido == 0) || (sizeof(U) == medido);
             if (!cabe || !bate)
@@ -736,9 +740,9 @@ namespace ConanApi
                 std::memcpy(buf + off, &tmp, sizeof(U));
             }
         }
-        // O resto é conferido SEMPRE, mesmo depois de uma reprovação: quem errou
-        // dois argumentos tem de ver os dois no log, não descobrir o segundo
-        // depois de consertar o primeiro.
+        // The rest is ALWAYS checked, even after a rejection: whoever got two
+        // arguments wrong has to see both in the log, not discover the second
+        // after fixing the first.
         const bool restoOk = Empacotar(fi, nome, buf, i + 1, std::forward<R>(resto)...);
         return ok && restoOk;
     }
@@ -761,11 +765,11 @@ namespace ConanApi
     inline bool EmpacotarS(const FuncInfo*, const char*, uint8_t*, int,
                            SaidasPendentes*) { return true; }
 
-    // Texto como argumento: os 16 bytes da FString que o JOGO alocou vao para o
-    // slot. O tamanho e conferido contra a reflexao como qualquer outro — se o
-    // parametro nao for FString, a chamada e recusada em vez de escrever 16
-    // bytes num slot de 4.
-    // FText no slot — mesma conferencia de tamanho do Texto.
+    // Text as an argument: the 16 bytes of the FString the GAME allocated go
+    // into the slot. The size is checked against reflection like any other — if
+    // the parameter isn't an FString, the call is refused instead of writing 16
+    // bytes into a 4-byte slot.
+    // FText in the slot — the same size check as Texto.
     template<typename... R>
     inline bool Empacotar(const FuncInfo* fi, const char* nome, uint8_t* buf,
                           int i, const TextoRico& t, R&&... resto)
@@ -858,7 +862,8 @@ namespace ConanApi
             const uint32_t off    = fi->Offset[i];
             const uint32_t limite = EspacoNoBloco(fi, off);
             const uint32_t medido = fi->Tamanho[i];
-            // FScriptArray sao 16 bytes. Se o slot nao tem 16, nao e' TArray.
+            // An FScriptArray is 16 bytes. If the slot isn't 16, it's not a
+            // TArray.
             if (limite < 16 || (medido != 0 && medido != 16))
             {
                 Log("Call(\"%s\"): parametro de saida %d nao e' TArray (aceita %u "
@@ -933,8 +938,9 @@ namespace ConanApi
             const uint32_t off    = fi->Offset[i];
             const uint32_t limite = EspacoNoBloco(fi, off);
             const uint32_t medido = fi->Tamanho[i];
-            // FString sao 16 bytes. Se o parametro nao tem 16, nao e' FString, e
-            // decodificar dali leria um ponteiro que nao esta ali.
+            // An FString is 16 bytes. If the parameter isn't 16, it's not an
+            // FString, and decoding from there would read a pointer that isn't
+            // there.
             if (limite < 16 || (medido != 0 && medido != 16))
             {
                 Log("Call(\"%s\"): parametro de saida %d nao e' FString (aceita "
@@ -973,10 +979,10 @@ namespace ConanApi
             const uint32_t limite = EspacoNoBloco(fi, off);
             const uint32_t medido = fi->Tamanho[i];
 
-            // A MESMA dupla conferencia da entrada, e pela mesma razao: se o
-            // tamanho nao bate, copiar de volta escreveria por cima da pilha do
-            // plugin. Saida errada corrompe a variavel de QUEM CHAMOU — e o
-            // sintoma aparece longe daqui.
+            // The SAME double check as the input, for the same reason: if the
+            // size doesn't match, copying back would write over the plugin's
+            // stack. A wrong output corrupts THE CALLER's variable, and the
+            // symptom appears far from here.
             if (sizeof(T) > limite || (medido != 0 && sizeof(T) != medido))
             {
                 Log("Call(\"%s\"): parametro de SAIDA %d espera %u bytes e o "
@@ -1072,8 +1078,8 @@ namespace ConanApi
             if (!sp.destino[k]) continue;
             if (sp.tam[k] == TAM_LISTA)
             {
-                // COPIA OS ELEMENTOS, nunca os 16 bytes do FScriptArray: o
-                // ponteiro de dentro dele e' do jogo e morre no retorno.
+                // COPIES THE ELEMENTS, never the FScriptArray's 16 bytes: the
+                // pointer inside it belongs to the game and dies on return.
                 if (sp.offset[k] + 16 <= n)
                 {
                     const uint8_t* a = buf + sp.offset[k];
@@ -1130,23 +1136,24 @@ namespace ConanApi
         const FuncInfo* fi = obj ? ResolveFunction(obj, nome) : nullptr;
         if (!fi)
         {
-            // Função inexistente devolve valor zerado em vez de lixo da pilha.
-            // Silêncio é ruim, mas lixo tipado é pior: vira bug em outro lugar.
+            // A missing function returns a zeroed value rather than stack
+            // garbage. Silence is bad, but typed garbage is worse: it becomes a
+            // bug somewhere else.
             //
-            // E O SENTINELA TEM DE CAIR AQUI
-            // ------------------------------
-            // Este `return` saía sem tocar no sentinela, e a flag é thread_local
-            // inicializada em `true`. Resultado: `UltimaChamadaExecutou()`
-            // respondia TRUE depois de uma chamada que nem existiu — o furo
-            // ficava justamente no caso mais comum de não-execução (nome
-            // escrito errado, função que sumiu numa atualização do jogo, objeto
-            // nulo), não no caso raro do ProcessEvent filtrando.
+            // AND THE SENTINEL HAS TO BE SET HERE
+            // ------------------------------------
+            // This `return` used to leave without touching the sentinel, and the
+            // flag is thread_local initialised to `true`. Result:
+            // `UltimaChamadaExecutou()` answered TRUE after a call that never
+            // existed — and the hole sat in the most common non-execution case
+            // (a misspelled name, a function that vanished in a game update, a
+            // null object), not in the rare case of ProcessEvent filtering.
             //
-            // É o mesmo cenário que ConanApi.cpp descreve como já ocorrido neste
-            // projeto: um plugin de permissão perguntando `IsAdmin` por um nome
-            // que mudou trata todo administrador como jogador comum — e o
-            // sentinela, que existe exatamente para desmentir isso, confirmava
-            // que o `false` era resposta legítima.
+            // It's the same scenario described elsewhere in this project: a
+            // permission plugin asking `IsAdmin` by a name that changed treats
+            // every administrator as an ordinary player — and the sentinel,
+            // which exists precisely to contradict that, was confirming the
+            // `false` as a legitimate answer.
             MarcarExecucao(false);
             Log("Call(\"%s\"): %s. Nada foi chamado — o valor devolvido e zero por "
                 "ausencia, nao por resultado, e UltimaChamadaExecutou() responde "
@@ -1161,8 +1168,8 @@ namespace ConanApi
         std::memset(buf, 0, n);
         if (!Empacotar(fi, nome, buf, 0, std::forward<A>(args)...))
         {
-            // Algum argumento não coube no parâmetro. `Empacotar` já disse no
-            // log qual e por quê; aqui a chamada simplesmente não acontece.
+            // An argument didn't fit its parameter. `Empacotar` already logged
+            // which one and why; here the call simply doesn't happen.
             MarcarExecucao(false);
             return R();
         }
@@ -1210,8 +1217,9 @@ namespace ConanApi
         }
         if constexpr (!std::is_void<R>::value)
         {
-            // Só a região DO RETORNO recebe o sentinela. Marcar os parâmetros de
-            // entrada faria a função do jogo ler lixo de propósito.
+            // Only the RETURN region gets the sentinel. Marking the input
+            // parameters would make the game's function read garbage on
+            // purpose.
             if (temRetorno) std::memset(buf + fi->OffsetRetorno, 0xCD, sizeof(R));
         }
         MarcarExecucao(true);
@@ -1223,11 +1231,11 @@ namespace ConanApi
             R r{};
             if (!temRetorno)
             {
-                // Pediram um R tipado de uma função que não tem onde devolvê-lo
-                // — ou não devolve nada, ou devolve de outro tamanho. O zero que
-                // sai daqui é ausência, não resposta, e o sentinela precisa
-                // dizer isso: era mais um caminho que devolvia `false`/`0` com
-                // `UltimaChamadaExecutou()` respondendo true.
+                // A typed R was asked of a function with nowhere to put it:
+                // either it returns nothing, or it returns a different size. The
+                // zero leaving here is absence, not an answer, and the sentinel
+                // has to say so. This was one more path returning `false`/`0`
+                // with `UltimaChamadaExecutou()` answering true.
                 MarcarExecucao(false);
                 Log("Call(\"%s\"): pediram retorno de %u bytes e a funcao nao tem "
                     "onde devolver isso (offset do retorno %d, bloco de %u). O "
@@ -1260,23 +1268,24 @@ namespace ConanApi
 
 #else   // ── PLUGIN: tudo pela tabela, sem linkar nada ─────────────────────
 
-    // ── DE ONDE VEM A TABELA, DO LADO DO PLUGIN ────────────────────────────
+    // ── WHERE THE TABLE COMES FROM, ON THE PLUGIN SIDE ─────────────────────
     //
-    // No motor, `TabelaDoPlugin()` mora no ConanTabela.cpp. O plugin nao tem
-    // esse .cpp — nem deve ter: e' justamente o que ele NAO linka. O que ele
-    // tem e' o ponteiro que o carregador entrega em ConanPluginCarregar.
+    // On the runtime side, `TabelaDoPlugin()` lives in its own translation unit.
+    // A plugin doesn't have that .cpp, and shouldn't: it's precisely what it
+    // does NOT link. What it has is the pointer the loader hands to
+    // ConanPluginCarregar.
     //
-    // Entao aqui a funcao vira inline sobre uma variavel que o proprio plugin
-    // preenche, com UMA linha:
+    // So here the function becomes inline over a variable the plugin itself
+    // fills, with ONE line:
     //
     //     void ConanPluginCarregar(const ConanApiTabela* api) {
-    //         ConanApi::UsarTabela(api);      <- esta
+    //         ConanApi::UsarTabela(api);      <- this one
     //         ...
     //     }
     //
-    // Sem ela, todo `Call` do ConanSDK.h vira no-op silencioso. Por isso
-    // `Call` avisa no log a primeira vez que for chamado sem tabela: o pior
-    // resultado possivel aqui e' "nao aconteceu nada e ninguem disse nada".
+    // Without it, every `Call` from ConanSDK.h becomes a silent no-op. That's
+    // why `Call` warns in the log the first time it's called with no table: the
+    // worst possible outcome here is "nothing happened and nobody said so".
     inline const ConanApiTabela*& TabelaMutavel()
     {
         static const ConanApiTabela* t = nullptr;
@@ -1285,16 +1294,16 @@ namespace ConanApi
     inline const ConanApiTabela* TabelaDoPlugin() { return TabelaMutavel(); }
     inline void UsarTabela(const ConanApiTabela* t) { TabelaMutavel() = t; }
 
-    // ── AS FUNCOES DO MOTOR QUE O HEADER USA, ROTEADAS PELA TABELA ─────────
+    // ── THE RUNTIME FUNCTIONS THE HEADER USES, ROUTED THROUGH THE TABLE ────
     //
-    // `Texto`, `TextoRico` e os leitores de slot sao DECLARADOS la' em cima e
-    // usados por structs definidas antes deste ponto — no motor eles vem da
-    // libconanapi.a. Dentro de um plugin nao ha biblioteca, e a definicao tem
-    // de ser esta: um desvio para a tabela.
+    // `Texto`, `TextoRico` and the slot readers are DECLARED further up and used
+    // by structs defined before this point. On the runtime side they come from
+    // the static library. Inside a plugin there is no library, and the
+    // definition has to be this: a detour through the table.
     //
-    // Sem isto, incluir o ConanSDK.h num plugin linka ate' a primeira `Texto`
-    // e morre com "undefined reference to ConanApi::CriarTextoDoJogo" — que foi
-    // exatamente o que aconteceu ao escrever a prova.
+    // Without it, including ConanSDK.h in a plugin links up to the first `Texto`
+    // and dies with "undefined reference to ConanApi::CriarTextoDoJogo", which
+    // is exactly what happened while writing the proof.
     inline bool CriarTextoDoJogo(const char* texto, void* destino16Bytes)
     {
         const ConanApiTabela* t = TabelaDoPlugin();
@@ -1306,30 +1315,29 @@ namespace ConanApi
         return t && t->CriarTextoRicoDoJogo &&
                t->CriarTextoRicoDoJogo(texto, destino16Bytes) != 0;
     }
-    // Estes dois so' sao chamados pelo caminho de motor (dentro do CallSaida
-    // que usa InvokeRaw). No plugin, quem decodifica o slot e' o motor, do lado
-    // de la' da tabela — mas as definicoes precisam existir para o header
-    // compilar inteiro.
+    // These two are only called on the runtime path. In a plugin, the slot is
+    // decoded by the runtime, on the far side of the table — but the definitions
+    // have to exist for the header to compile as a whole.
     inline int TextoDeSlot(const void*, char* saida, int tam)
     { if (saida && tam > 0) saida[0] = 0; return 0; }
     inline int TextoRicoDeSlot(const void*, char* saida, int tam)
     { if (saida && tam > 0) saida[0] = 0; return 0; }
 
-    // `Log` do plugin vai para o mesmo arquivo, pela tabela.
+    // A plugin's `Log` goes to the same file, through the table.
     inline void Log(const char* fmt, ...)
     {
         const ConanApiTabela* t = TabelaDoPlugin();
         if (!t || !t->Log) return;
-        // Sem vsnprintf aqui: a tabela recebe o formato e os argumentos ja'
-        // expandidos seria outra ABI. Uma linha sem formatacao basta para o
-        // punhado de avisos que o header emite.
+        // No vsnprintf here: the table takes the format, and pre-expanded
+        // arguments would be a different ABI. An unformatted line is enough for
+        // the handful of warnings this header emits.
         t->Log("%s", fmt);
     }
 
-    // Chamado quando o plugin esqueceu o UsarTabela(). Nao ha para onde
-    // escrever (o Log tambem vem da tabela), entao sobra a saida padrao do
-    // processo — que no servidor cai no log do jogo. Melhor isso do que o
-    // plugin inteiro nao fazer nada em silencio.
+    // Called when the plugin forgot UsarTabela(). There's nowhere to write (Log
+    // also comes from the table), so what's left is the process's standard
+    // error, which on the server lands in the game's log. Better that than the
+    // whole plugin doing nothing, silently.
     inline void AvisarSemTabela(const char* nome)
     {
         static bool avisou = false;
@@ -1342,21 +1350,22 @@ namespace ConanApi
             nome ? nome : "(sem nome)");
     }
 
-    // Cada argumento e' classificado em tempo de compilacao: entrada comum,
-    // texto (que ja' vem como 16 bytes do jogo), ou um dos descritores de
-    // saida. A ORDEM e' a da reflexao — o indice do argumento e' o indice do
-    // parametro, e reordenar aqui escreveria cada valor no slot do vizinho.
-    // AS POSICOES SAO AS DA REFLEXAO, E ISSO NAO E' DETALHE
-    // ------------------------------------------------------
-    // O `FuncInfo` do motor indexa TODOS os parametros — entradas e saidas na
-    // mesma numeracao. A primeira versao disto numerava so' as entradas, e num
-    // `Split(entrada, entrada, SAIDA, SAIDA, entrada, entrada)` o quinto
-    // argumento (1 byte) foi conferido contra o slot do terceiro (16 bytes).
-    // O motor recusou — corretamente, e essa recusa e' o unico motivo de o
-    // defeito ter aparecido em vez de escrever 1 byte no meio de uma FString.
+    // Each argument is classified at compile time: ordinary input, text (which
+    // already arrives as 16 bytes from the game), or one of the output
+    // descriptors. The ORDER is reflection's: the argument's index is the
+    // parameter's index, and reordering here would write each value into its
+    // neighbour's slot.
+    // THE POSITIONS ARE REFLECTION'S, AND THAT ISN'T A DETAIL
+    // --------------------------------------------------------
+    // The runtime's function record indexes ALL parameters, inputs and outputs
+    // in the same numbering. The first version of this numbered only the inputs,
+    // and in a `Split(in, in, OUT, OUT, in, in)` the fifth argument (1 byte) was
+    // checked against the third one's slot (16 bytes). The runtime refused —
+    // correctly, and that refusal is the only reason the defect surfaced instead
+    // of writing 1 byte into the middle of an FString.
     //
-    // Entao `ent[i]` e' o parametro i, e slot de saida entra como `nullptr`:
-    // buraco explicito, que o motor pula.
+    // So `ent[i]` is parameter i, and an output slot goes in as `nullptr`: an
+    // explicit hole, which the runtime skips.
     struct ColetaArgs
     {
         const void*  ent[MAX_PARMS];
@@ -1388,7 +1397,7 @@ namespace ConanApi
         c.Entrada(&v, uint32_t(sizeof(T)));
         ++c.indice;
     }
-    // Texto ja' e' uma FString que o JOGO alocou: passam-se os 16 bytes dela.
+    // Texto is already an FString the GAME allocated: its 16 bytes are passed.
     inline void ColetaUm(ColetaArgs& c, const Texto& v)
     {
         c.Entrada(v.bruto, 16);
@@ -1399,9 +1408,10 @@ namespace ConanApi
         c.Entrada(v.bruto, 16);
         ++c.indice;
     }
-    // O FName ja' resolvido pelo pool do jogo: 8 bytes, sem posse — o pool e'
-    // dono do texto e vive o processo inteiro, entao nada aqui pende depois que
-    // a chamada retorna (ao contrario da FString, que o ProcessEvent destroi).
+    // The FName already resolved by the game's pool: 8 bytes, no ownership. The
+    // pool owns the text and lives for the whole process, so nothing here
+    // dangles after the call returns (unlike an FString, which ProcessEvent
+    // destroys).
     inline void ColetaUm(ColetaArgs& c, const Nome& v)
     {
         c.Entrada(v.bruto, 8);
@@ -1444,8 +1454,8 @@ namespace ConanApi
         c.Buraco();
         ++c.indice;
     }
-    // UPARAM(ref): escreve ANTES e le' DEPOIS. Entra nas duas listas, com o
-    // mesmo indice — que e' exatamente o que o slot faz no bloco do jogo.
+    // UPARAM(ref): writes BEFORE and reads AFTER. It goes into both lists, with
+    // the same index, which is exactly what the slot does in the game's block.
     template<typename T>
     inline void ColetaUm(ColetaArgs& c, const EntreSai<T>& v)
     {
@@ -1475,7 +1485,7 @@ namespace ConanApi
         ++c.indice;
     }
 
-    // Retorno: indice -1, e NAO consome posicao de parametro.
+    // Return value: index -1, and it does NOT consume a parameter position.
     inline void ColetaUm(ColetaArgs& c, const RetornoTexto& v)
     {
         if (c.nsai < int(MAX_PARMS))
@@ -1501,12 +1511,12 @@ namespace ConanApi
     inline void Coleta(ColetaArgs& c, A&&... args)
     { (void)c; (void)std::initializer_list<int>{ (ColetaUm(c, args), 0)..., 0 }; }
 
-    // ── as duas chamadas ───────────────────────────────────────────────────
+    // ── the two calls ──────────────────────────────────────────────────────
     //
-    // A tabela pode ser mais VELHA que este header: um plugin compilado contra
-    // a v6 pode rodar numa API v5, que nao tem ChamarFuncaoEx. Conferir o
-    // `tamanho` antes de usar o ponteiro e' o que separa "nao da'" de ler
-    // memoria alem do fim da struct e chamar lixo.
+    // The table may be OLDER than this header: a plugin compiled against v6 can
+    // run on a v5 API, which has no ChamarFuncaoEx. Checking `tamanho` before
+    // using the pointer is what separates "can't do that" from reading past the
+    // end of the struct and calling garbage.
     inline bool TabelaTem(size_t bytesAte)
     {
         const ConanApiTabela* t = TabelaDoPlugin();
@@ -1548,9 +1558,9 @@ namespace ConanApi
         }
         else if (t && t->Log)
         {
-            // Nao inventar sucesso: sem ChamarFuncaoEx os slots de saida ficam
-            // com o valor que ja' tinham, e devolver como se tivessem sido
-            // preenchidos e' o defeito que esta API passou a noite perseguindo.
+            // Don't invent success: without ChamarFuncaoEx the output slots
+            // keep whatever value they already had, and returning as if they'd
+            // been filled is the very defect this API spent the night hunting.
             t->Log("CallSaida(\"%s\"): esta API e' anterior a v6 e nao sabe "
                    "devolver parametro de saida. Nada foi chamado.", nome);
         }
@@ -1560,18 +1570,17 @@ namespace ConanApi
 
 #endif  // CONAN_MOTOR
 
-    // ── Nome: o construtor, agora que `Call` existe ─────────────────────────
+    // ── Nome: the constructor, now that `Call` exists ───────────────────────
     //
-    // Vale para os dois caminhos (motor e plugin) porque `Call` existe nos dois
-    // — no motor pelo InvokeRaw, no plugin pela tabela. Uma implementacao so',
-    // e nenhum "#ifdef" para as duas divergirem depois.
+    // It serves both paths (runtime and plugin) because `Call` exists on both.
+    // One implementation, and no "#ifdef" for the two to diverge later.
     //
-    // MEMORIZA porque o pool nao esquece: resolvido uma vez, aquele texto tem
-    // aquele indice ate' o processo morrer. Sem isto, uma loja que entrega item
-    // pagaria um ProcessEvent por entrega so' para redescobrir o mesmo numero.
-    // O cache e' pequeno de proposito: nomes de contexto sao poucos e fixos
-    // (o plugin os escreve no codigo); cheio, ainda funciona, so' deixa de
-    // memorizar — nunca devolve errado.
+    // It MEMOISES because the pool doesn't forget: resolved once, that text has
+    // that index until the process dies. Without this, a shop delivering items
+    // would pay one ProcessEvent per delivery just to rediscover the same
+    // number. The cache is small on purpose: context names are few and fixed
+    // (the plugin writes them in code); when full it still works, it just stops
+    // memoising, and never returns the wrong answer.
     inline Nome::Nome(const char* s) : bruto{}, valido(false)
     {
         if (!s || !*s) return;
@@ -1588,11 +1597,11 @@ namespace ConanApi
             return;
         }
 
-        // O CDO da biblioteca vem por caminhos diferentes dos dois lados da
-        // fronteira, e este e' o unico ponto do envelope onde isso aparece: o
-        // motor chama a funcao direto, o plugin so' tem a tabela. As duas
-        // linhas fazem a MESMA coisa — nao ha regra divergindo aqui, so' a
-        // porta de entrada.
+        // The library's CDO is reached differently on each side of the
+        // boundary, and this is the only place in the wrapper where that shows:
+        // the runtime calls the function directly, the plugin only has the
+        // table. Both lines do the SAME thing — no rule diverges here, only the
+        // way in.
 #ifdef CONAN_MOTOR
         void* lib = static_cast<void*>(GetDefaultObject("KismetStringLibrary"));
 #else
@@ -1602,8 +1611,8 @@ namespace ConanApi
 #endif
         if (!lib) return;
 
-        // Conv_StringToName(InString: FString) -> FName. A FString de entrada e'
-        // montada pelo jogo (Texto), e o retorno sao os 8 bytes do FName.
+        // Conv_StringToName(InString: FString) -> FName. The input FString is
+        // built by the game (Texto), and the return is the FName's 8 bytes.
         Texto entrada(s);
         if (!entrada.valido) return;
 
@@ -1627,35 +1636,37 @@ namespace ConanApi
         }
     }
 
-    // as âncoras desta build; regeradas pelo dump a cada atualização do jogo
-// ── A BUILD DO JOGO, EM UM LUGAR SÓ ─────────────────────────────────────────
+    // this build's anchors; regenerated on every game update
+// ── THE GAME BUILD, IN ONE PLACE ────────────────────────────────────────────
 //
-// O número aparecia escrito à mão na mensagem de log. Quando a build mudou de
-// 24383534 para 24784646, os RVAs foram atualizados e a mensagem continuou
-// dizendo o número velho — o log afirmando uma coisa e a API rodando outra.
+// The number used to be written by hand in the log message. When the build
+// changed from 24383534 to 24784646, the anchors were updated and the message
+// kept saying the old number — the log asserting one thing while the API ran
+// another.
 //
-// É o I-10 outra vez: numa madrugada, essa linha é o que alguém usa para saber
-// para qual build a API foi feita. Dizer o número errado manda a pessoa
-// investigar o lugar errado.
+// At 3am, that line is what someone uses to know which build the API was made
+// for. Saying the wrong number sends them to investigate the wrong place.
 #define CONAN_BUILD_DO_JOGO "24784646"
 
 
-    // ProcessEvent é virtual: chamamos pela vtable, nunca pelo endereço fixo.
-    // O índice foi eleito por um teste que aprovou 1 função entre 1.550.
+    // ProcessEvent is virtual: it's called through the vtable, never by a fixed
+    // address. The index was elected by a test that approved 1 function out of
+    // 1,550.
     constexpr int PROCESSEVENT_VTABLE_INDEX = 79;
 }
 
 // ── tipos mínimos da engine, só o que os acessores precisam ─────────────────
 struct FName            { int32_t ComparisonIndex; int32_t Number; };
 struct FString          { void* Data; int32_t Num; int32_t Max; };
-// FText mede 16, não 8: medido na reflexão (ElementSize da TextProperty). O
-// layout interno não foi medido, então são bytes opacos — inventar campos com o
-// tamanho certo daria uma struct plausível e falsa.
+// FText is 16 bytes, not 8: measured through reflection (TextProperty's
+// ElementSize). The internal layout was not measured, so these are opaque bytes.
+// Inventing fields that add up to the right size would give a plausible and
+// false struct.
 struct FText            { uint8_t _opaco[16]; };
 struct FScriptArray     { void* Data; int32_t Num; int32_t Max; };
-// FScriptMap e FScriptSet medem 80 cada (medido), não 32. A conta errada fazia
-// todo struct que contivesse um TMap fechar com tamanho menor que o real — e o
-// campo seguinte cair no lugar errado, em silêncio.
+// FScriptMap and FScriptSet are 80 bytes each (measured), not 32. The wrong
+// figure made every struct containing a TMap come out smaller than it really
+// is, and the following field land in the wrong place, silently.
 struct FScriptMap       { uint8_t _opaco[80]; };
 struct FScriptSet       { uint8_t _opaco[80]; };
 struct FWeakObjectPtr   { int32_t ObjectIndex; int32_t ObjectSerialNumber; };
@@ -1708,10 +1719,10 @@ struct FVector2D        { double X, Y; };
 // This comment stays because the mistake is easy to repeat: the class compiled,
 // looked right, and the test took 90 seconds to bring the server down.
 
-// ── ler texto que veio DO jogo ──────────────────────────────────────────────
-// Declarada dentro de ConanApi, e aqui — depois de FString existir. A definição
-// mora no namespace; declarar no escopo global daria erro de símbolo ausente que
-// só aparece no link, longe da causa.
+// ── reading text that came FROM the game ────────────────────────────────────
+// Declared inside ConanApi, and here, after FString exists. The definition lives
+// in the namespace; declaring it at global scope would give a missing-symbol
+// error that only appears at link time, far from the cause.
 namespace ConanApi { std::string TextoDoJogo(const FString& s); }
 
 // ── referência a um membro, resolvida por offset ────────────────────────────
@@ -1769,10 +1780,10 @@ struct BitRef
     void Set(bool v) const
     {
         uint8_t* p = byte();
-        // Lê-modifica-escreve preservando os vizinhos. Não é atômico de
-        // propósito: tornar atômico daria a impressão de que dá para escrever
-        // bitfield do jogo de qualquer thread, e não dá — quem escreve num byte
-        // que o jogo também escreve precisa saber o que está fazendo.
+        // Read-modify-write, preserving the neighbours. Deliberately not
+        // atomic: making it atomic would suggest you can write the game's
+        // bitfields from any thread, and you can't — writing into a byte the
+        // game also writes needs to be a deliberate decision.
         *p = v ? uint8_t(*p | mascara) : uint8_t(*p & ~mascara);
     }
 
@@ -1799,9 +1810,10 @@ public:
     R Call(const char* nome, A&&... a)
     { return ConanApi::Call<R>(this, nome, std::forward<A>(a)...); }
 
-    // Faltava o par: funcao com parametro de SAIDA sao 6.157 das 36.757 desta
-    // build, e sem este atalho o dev tinha de descer para ConanApi::CallSaida
-    // com o `this` na mao — justo no caso mais facil de errar.
+    // The counterpart was missing: functions with an OUTPUT parameter are 6,157
+    // of the 36,757 on this build, and without this shortcut a developer had to
+    // drop down to ConanApi::CallSaida with `this` in hand — in precisely the
+    // case that's easiest to get wrong.
     template<typename R = void, typename... A>
     R CallSaida(const char* nome, A&&... a)
     { return ConanApi::CallSaida<R>(this, nome, std::forward<A>(a)...); }
