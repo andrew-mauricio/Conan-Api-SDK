@@ -1,16 +1,29 @@
 // ============================================================================
-//  ConanPluginApi.h — A TABELA. É isto que um plugin recebe, e é só isto.
+//  ConanPluginApi.h — THE TABLE. This is what a plugin receives, and all it
+//  receives.
 //
 //  ┌──────────────────────────────────────────────────────────────────────┐
-//  │  Este arquivo é AUTOSSUFICIENTE. Não inclua mais nada nosso.          │
-//  │  Não há biblioteca para linkar, não há .cpp nosso para compilar.      │
+//  │  This file is SELF-CONTAINED. Include nothing else of ours.          │
+//  │  There is no library to link and no .cpp of ours to compile.         │
 //  └──────────────────────────────────────────────────────────────────────┘
 //
 //  ────────────────────────────────────────────────────────────────────────────
-//  COMO FUNCIONA
+//  A NOTE ON IDENTIFIER NAMES
 //  ────────────────────────────────────────────────────────────────────────────
-//  O carregador entra no processo do servidor, monta a reflexão, e chama o seu
-//  plugin passando um ponteiro para uma tabela de funções:
+//  The identifiers in this table are Portuguese (ConanPluginCarregar,
+//  LerTextoDoJogo, CONAN_CANCELAR). They are part of the published ABI, and
+//  renaming them would break every plugin already compiled against it.
+//
+//  All documentation is in English, and every field below is commented. A
+//  glossary is in Docs/DEVELOPERS.md. Rough guide: Ler = Read, Escrever =
+//  Write, Chamar = Call, Carregar = Load, Nome = Name, Tabela = Table,
+//  Caminho = Path, Jogo = Game, Tarefa = Task.
+//
+//  ────────────────────────────────────────────────────────────────────────────
+//  HOW IT WORKS
+//  ────────────────────────────────────────────────────────────────────────────
+//  The loader enters the dedicated server process, brings reflection up, and
+//  calls your plugin passing a pointer to a table of functions:
 //
 //      static const ConanApiTabela* g_api = nullptr;
 //
@@ -24,52 +37,52 @@
 //      {
 //          if (!api || api->tamanho < sizeof(ConanApiTabela)) return;
 //          g_api = api;
-//          g_api->Log("meu plugin subiu");
+//          g_api->Log("my plugin is up");
 //          g_api->HookProcessEvent("ServerSendChatMessage", AoFalar, nullptr, 100);
 //      }
 //
-//  Este exemplo COMPILA como está — é extraído deste comentário e compilado a
-//  cada montagem do pacote. A versão anterior chamava HookProcessEvent com dois
-//  argumentos quando ela exige quatro: quem copiasse daqui, que é o primeiro
-//  lugar onde um dev olha, batia num erro de compilação na primeira tentativa.
+//  This example COMPILES as written — it is extracted from this comment and
+//  compiled on every package build. An earlier version called HookProcessEvent
+//  with two arguments where it takes four: anyone copying from here, which is
+//  the first place a developer looks, hit a compile error on their first try.
 //
-//  Você chama tudo através de `api->`. Não existe nenhuma implementação nossa
-//  dentro do seu binário.
-//
-//  ────────────────────────────────────────────────────────────────────────────
-//  POR QUE ASSIM, E NÃO COMPILANDO O FONTE JUNTO
-//  ────────────────────────────────────────────────────────────────────────────
-//  Três motivos, e os três importam para VOCÊ, não só para nós:
-//
-//  1. SEU COMPILADOR NÃO IMPORTA MAIS. Isto é C puro: `struct` de ponteiros de
-//     função com convenção `__cdecl`. Visual Studio de qualquer versão, MinGW,
-//     clang — todos concordam sobre isso. Antes, o SDK precisava ir com o fonte
-//     porque biblioteca C++ não atravessa compilador: layout de `std::string` e
-//     de vtable mudam entre MSVC e MinGW, e até entre versões do MSVC. Linkava,
-//     rodava, e corrompia memória sem erro legível. Esse problema deixa de
-//     existir aqui.
-//
-//  2. ATUALIZAR A API NÃO OBRIGA VOCÊ A RECOMPILAR. Enquanto campos novos forem
-//     acrescentados **no fim** da tabela e `versao` subir, seu plugin compilado
-//     hoje continua funcionando amanhã. Se o motor de hooks mudar por dentro,
-//     você não fica sabendo — e é assim que tem de ser.
-//
-//  3. O MOTOR FICA DE UM LADO SÓ. O decodificador de instruções, a mesa de
-//     hooks, os offsets desta build — nada disso entra no seu binário. Menos
-//     código seu para dar errado, e nós podemos consertar um defeito do motor
-//     sem pedir que 40 plugins sejam recompilados.
+//  You call everything through `api->`. There is no implementation of ours
+//  inside your binary.
 //
 //  ────────────────────────────────────────────────────────────────────────────
-//  COMPATIBILIDADE: SEMPRE CONFIRA `versao` E `tamanho`
+//  WHY THIS WAY, AND NOT BY COMPILING SOURCE ALONGSIDE
 //  ────────────────────────────────────────────────────────────────────────────
-//  Um plugin compilado contra uma tabela MAIOR, rodando numa API mais velha,
-//  leria ponteiro além do fim da struct — e chamaria lixo. Por isso:
+//  Three reasons, and all three matter to YOU, not just to us:
+//
+//  1. YOUR COMPILER NO LONGER MATTERS. This is plain C: a `struct` of function
+//     pointers with `__cdecl` convention. Any Visual Studio version, MinGW,
+//     clang — they all agree on that. Previously an SDK had to ship source,
+//     because a C++ library does not cross compilers: the layout of
+//     `std::string` and of vtables differs between MSVC and MinGW, and even
+//     between MSVC versions. It linked, it ran, and it corrupted memory with no
+//     readable error. That problem does not exist here.
+//
+//  2. UPDATING THE API DOES NOT FORCE YOU TO RECOMPILE. As long as new fields
+//     are appended **at the end** of the table and `versao` increments, a plugin
+//     compiled today keeps working tomorrow. If the hook engine changes
+//     internally, you never find out — and that is how it should be.
+//
+//  3. THE ENGINE STAYS ON ONE SIDE. The instruction decoder, the hook table,
+//     this build's offsets — none of it enters your binary. Less of your code
+//     to go wrong, and we can fix an engine defect without asking 40 plugins to
+//     be rebuilt.
+//
+//  ────────────────────────────────────────────────────────────────────────────
+//  COMPATIBILITY: ALWAYS CHECK `versao` AND `tamanho`
+//  ────────────────────────────────────────────────────────────────────────────
+//  A plugin compiled against a LARGER table, running on an older API, would
+//  read a pointer past the end of the struct — and call garbage. Hence:
 //
 //      if (!api || api->tamanho < sizeof(ConanApiTabela)) {
-//          // API mais velha que este plugin. Use só o que existe, ou saia.
+//          // API older than this plugin. Use only what exists, or bail out.
 //      }
 //
-//  Nós nunca removemos nem reordenamos campo. Só acrescentamos no fim.
+//  We never remove or reorder a field. We only append.
 // ============================================================================
 #ifndef CONAN_PLUGIN_API_H
 #define CONAN_PLUGIN_API_H
@@ -81,43 +94,43 @@
 extern "C" {
 #endif
 
-// A versão sobe quando campos são ACRESCENTADOS. Nunca quando algo muda de
-// lugar — isso não acontece.
+// The version increments when fields are APPENDED. Never when something moves
+// — that does not happen.
 #define CONAN_API_VERSAO 6
 
-// ── o que um hook recebe ────────────────────────────────────────────────────
+// ── what a hook receives ────────────────────────────────────────────────────
 //
-// `Parms` é o bloco de parâmetros da função interceptada, no layout que a
-// reflexão descreve. `Obj` é o objeto dono da chamada.
+// `Parms` is the intercepted function's parameter block, in the layout
+// reflection describes. `Obj` is the object that owns the call.
 typedef struct ConanChamada
 {
-    void*       Obj;         // o UObject que recebeu a chamada
-    void*       Func;        // a UFunction
-    void*       Parms;       // bloco de parâmetros (pode ser NULL)
-    uint32_t    ParmsSize;   // tamanho do bloco, em bytes
-    // O FName da função, JÁ RESOLVIDO. Comparar dois int32 é o teste O(1) que
-    // permite a um hook curinga separar "nome novo" de ruído sem decodificar
-    // texto a 6.300 chamadas por segundo. Sem isto, um plugin de descoberta não
-    // tem sobre o que indexar.
+    void*       Obj;         // the UObject that received the call
+    void*       Func;        // the UFunction
+    void*       Parms;       // parameter block (may be NULL)
+    uint32_t    ParmsSize;   // block size, in bytes
+    // The function's FName, ALREADY RESOLVED. Comparing two int32s is the O(1)
+    // test that lets a wildcard hook separate "new name" from noise without
+    // decoding text at 6,300 calls per second. Without it, a discovery plugin
+    // has nothing to index on.
     int32_t     NomeIndice;  // FName.ComparisonIndex
-    int32_t     NomeNumero;  // FName.Number  (Foo_1 é Number=2)
+    int32_t     NomeNumero;  // FName.Number  (Foo_1 is Number=2)
 } ConanChamada;
 
-// O que o seu callback devolve.
+// What your callback returns.
 typedef enum ConanAcao
 {
-    CONAN_CONTINUAR = 0,   // deixa a função original rodar
-    CONAN_CANCELAR  = 1    // engole a chamada: o jogo não executa
+    CONAN_CONTINUAR = 0,   // let the original function run
+    CONAN_CANCELAR  = 1    // swallow the call: the game does not execute it
 } ConanAcao;
 
 typedef ConanAcao (*ConanFnAntes)(ConanChamada* c);
 typedef void      (*ConanFnDepois)(ConanChamada* c);
 typedef void      (*ConanFnTarefa)(void* contexto);
 
-// ── por que um hook por endereço pode ser RECUSADO ──────────────────────────
+// ── why an address hook may be REFUSED ──────────────────────────────────────
 //
-// Recusa não é erro nosso: é a API se negando a fazer algo que corromperia o
-// servidor. O motivo vem sempre no log, em português.
+// A refusal is not a bug on our side: it is the API declining to do something
+// that would corrupt the server. The reason is always written to the log.
 typedef enum ConanRecusa
 {
     CONAN_OK = 0,
@@ -133,355 +146,396 @@ typedef enum ConanRecusa
 } ConanRecusa;
 
 // ============================================================================
-//  A TABELA
+//  THE TABLE
 //
-//  Ordem NUNCA muda. Campos novos entram no fim, e `versao` sobe.
+//  Order NEVER changes. New fields go at the end, and `versao` increments.
 // ============================================================================
 typedef enum ConanTipoSaida
 {
-    CONAN_SAIDA_POD = 0,   // copia os bytes do slot
-    CONAN_SAIDA_TEXTO,     // FString: DECODIFICA. Copiar os 16 bytes daria
-                           // ao plugin um ponteiro que o ProcessEvent
-                           // destroi ao retornar.
-    CONAN_SAIDA_TEXTO_RICO,// FText, pelo mesmo motivo
-    CONAN_SAIDA_LISTA      // TArray: copia os ELEMENTOS, nunca o cabecalho
+    CONAN_SAIDA_POD = 0,   // copy the slot's bytes
+    CONAN_SAIDA_TEXTO,     // FString: DECODES it. Copying the 16 bytes would
+                           // hand the plugin a pointer that ProcessEvent
+                           // destroys on return.
+    CONAN_SAIDA_TEXTO_RICO,// FText, for the same reason
+    CONAN_SAIDA_LISTA      // TArray: copies the ELEMENTS, never the header
 } ConanTipoSaida;
 
 typedef struct ConanSaida
 {
-    int      indice;       // qual parametro, na ordem da reflexao
-    void*    destino;      // onde escrever
+    int      indice;       // which parameter, in reflection order
+    void*    destino;      // where to write
     uint32_t tipo;         // ConanTipoSaida
-    uint32_t capacidade;   // POD: bytes · TEXTO: capacidade do char* ·
-                           // LISTA: quantos elementos cabem
-    uint32_t tamElemento;  // so' LISTA
-    int*     contagem;     // so' LISTA: recebe quantos couberam (pode ser NULL)
+    uint32_t capacidade;   // POD: bytes · TEXTO: capacity of the char* ·
+                           // LISTA: how many elements fit
+    uint32_t tamElemento;  // LISTA only
+    int*     contagem;     // LISTA only: receives how many fit (may be NULL)
 } ConanSaida;
 
 typedef struct ConanApiTabela
 {
-    // ── cabeçalho: confira isto antes de usar o resto ───────────────────────
-    uint32_t versao;    // CONAN_API_VERSAO de quem preencheu
-    uint32_t tamanho;   // sizeof(ConanApiTabela) de quem preencheu
+    // ── header: check this before using the rest ────────────────────────────
+    uint32_t versao;    // CONAN_API_VERSAO of whoever filled the table
+    uint32_t tamanho;   // sizeof(ConanApiTabela) of whoever filled the table
 
-    // ── diagnóstico ─────────────────────────────────────────────────────────
+    // ── diagnostics ─────────────────────────────────────────────────────────
     //
-    // Escreve em Conan-Api/Logs/ConanApi.log, com data e rotação. É o seu
-    // canal para falar com o dono do servidor — e o único, porque mandar texto
-    // de volta para o jogo derruba o servidor (veja a documentação).
+    // Writes to Conan-Api/Logs/ConanApi.log, timestamped and rotated. This is
+    // your channel to the server owner — and the only one, because handing text
+    // back to the game crashes the server (see the documentation).
     void (*Log)(const char* fmt, ...);
 
-    // A reflexão está de pé? Se devolver 0, o jogo provavelmente atualizou e a
-    // API se recusou a trabalhar com offsets que não conferem. Não insista.
+    // Is reflection up? If this returns 0, the game most likely updated and the
+    // API refused to work with offsets that do not check out. Do not insist.
     int (*Pronta)(void);
 
-    // ── memória: leia antes de tocar ────────────────────────────────────────
+    // ── memory: read this before touching anything ──────────────────────────
     //
-    // Diz se [p, p+tam) está MAPEADO e legível.
+    // Says whether [p, p+tam) is MAPPED and readable.
     //
-    // ── O QUE ELE NÃO RESPONDE, E ISSO IMPORTA MUITO ────────────────────────
+    // ── WHAT IT DOES NOT ANSWER, AND THAT MATTERS A LOT ─────────────────────
     //
-    // `Legivel` responde "esta memória está mapeada", NÃO "este objeto está
-    // vivo". A diferença derruba servidor, e é a armadilha mais fácil de cair
-    // nesta API:
+    // `Legivel` answers "this memory is mapped", NOT "this object is alive".
+    // The difference crashes servers, and it is the easiest trap to fall into
+    // in this API:
     //
-    //   · você guarda um ponteiro de UObject entre um hook e outro;
-    //   · o coletor de lixo do jogo destrói o objeto e reaproveita o endereço;
-    //   · `Legivel` continua devolvendo 1, porque a página segue mapeada;
-    //   · você lê campos de um objeto que virou outra coisa, e age sobre lixo.
+    //   · you keep a UObject pointer between one hook and the next;
+    //   · the game's garbage collector destroys the object and reuses the
+    //     address;
+    //   · `Legivel` still returns 1, because the page is still mapped;
+    //   · you read fields of an object that became something else, and act on
+    //     garbage.
     //
-    // Não existe primitiva barata para "está vivo" — a Unreal resolve isso com
-    // ponteiros fracos que a reflexão não expõe. O que dá para fazer, e é o que
-    // recomendamos:
+    // There is no cheap primitive for "is alive" — Unreal solves that with weak
+    // pointers that reflection does not expose. What you can do, and what we
+    // recommend:
     //
-    //   NÃO guarde ponteiro de objeto do jogo entre chamadas. Pegue-o de novo
-    //   dentro de cada hook (`c->Obj`) ou por FindObject/FindObjects na hora
-    //   em que for usar. É mais barato do que parece e não tem esta classe de
-    //   defeito.
+    //   DO NOT keep game object pointers between calls. Fetch them again inside
+    //   each hook (`c->Obj`) or via FindObject/FindObjects at the moment of
+    //   use. It is cheaper than it looks and does not have this class of defect.
     //
-    // Use `Legivel` para o que ele serve: recusar ponteiro obviamente inválido
-    // antes de tocar nele. Já evitou queda real aqui — uma leitura 256 KB além
-    // do fim de um pool derrubava o servidor inteiro.
+    // Use `Legivel` for what it is for: refusing an obviously invalid pointer
+    // before touching it. It has prevented a real crash here — a read 256 KB
+    // past the end of a pool was taking the whole server down.
     int (*Legivel)(const void* p, size_t tam);
 
-    // ── reflexão ────────────────────────────────────────────────────────────
-    void* (*FindClass)(const char* nome);          // UClass* ou NULL
-    void* (*FindObject)(const char* nome);         // UObject* ou NULL
-    void* (*GetDefaultObject)(const char* nomeClasse);  // o CDO, por nome
+    // ── reflection ──────────────────────────────────────────────────────────
+    void* (*FindClass)(const char* nome);          // UClass* or NULL
+
+    // MIND THE NAME: FindObject takes a **CLASS** name and returns the first
+    // INSTANCE of it. It does NOT find an object by the object's own name.
+    //
+    //     FindObject("ConanPlayerController")  -> the first controller  [ok]
+    //     FindObject("/Game/Items/ItemTable")  -> NULL                  [x]
+    //
+    // The second is what everyone tries first, and the NULL looks like it says
+    // "that object does not exist" when what actually happened was a different
+    // question than intended. It happened here on 2026-08-20 and cost a whole
+    // round: the plugin logged "table not found" with the table loaded and
+    // 9,121 rows inside it.
+    //
+    // To find an object BY NAME, ask for the instances and pick:
+    //
+    //     void* found[8192];
+    //     int n = api->FindObjects("DataTable", found, 8192, 1);
+    //     for (int i = 0; i < n; ++i) {
+    //         char name[256];
+    //         if (!api->NomeDoObjeto(found[i], name, sizeof(name))) continue;
+    //         if (strncmp(name, "Default__", 9) == 0) continue;   // it is the CDO
+    //         if (strcmp(name, "ItemTable") == 0) { /* found it */ }
+    //     }
+    //
+    // And when you do not find it, LIST what exists before giving up: "not
+    // found" without the list sends the owner looking in the wrong place, and
+    // on a modded server the name may be different.
+    void* (*FindObject)(const char* nome);         // UObject* or NULL
+    void* (*GetDefaultObject)(const char* nomeClasse);  // the CDO, by name
     int   (*DescendeDe)(void* obj, const char* nomeClasse);
     const char* (*NomeDoObjeto)(void* obj, char* saida, int tam);
 
-    // ── membros por offset ──────────────────────────────────────────────────
+    // ── members by offset ───────────────────────────────────────────────────
     //
-    // O offset vem do catálogo da reflexão (Ferramentas/), não de chute.
+    // The offset comes from the reflection catalogue, not from guessing.
+    // Prefer OffsetDoMembro(obj, "FieldName") below: it resolves by name on
+    // whichever build is running, and survives a game update.
     int (*LerMembro)(void* obj, uint32_t offset, void* saida, uint32_t tam);
     int (*EscreverMembro)(void* obj, uint32_t offset, const void* valor, uint32_t tam);
-    // bitfield: 7 bools cabem num byte, e ler o byte inteiro devolve lixo
+    // bitfield: 7 bools fit in one byte, and reading the whole byte gives junk
     int (*LerBit)(void* obj, uint32_t offset, uint8_t mascara);
     int (*EscreverBit)(void* obj, uint32_t offset, uint8_t mascara, int valor);
 
-    // ── chamar função do jogo por reflexão ──────────────────────────────────
+    // ── calling a game function through reflection ──────────────────────────
     //
-    // `args` é um vetor de ponteiros para os valores, e `tams` os tamanhos de
-    // cada um. A API confere cada tamanho contra o parâmetro real e RECUSA se
-    // não bater — passar 4 bytes onde o jogo espera 8 escreve lixo no resto, e
-    // passar 8 onde cabem 4 estoura o bloco. Devolve 1 se executou.
+    // `args` is an array of pointers to the values, and `tams` their sizes. The
+    // API checks each size against the real parameter and REFUSES on mismatch —
+    // passing 4 bytes where the game expects 8 writes garbage into the rest, and
+    // passing 8 where 4 fit overruns the block. Returns 1 if it executed.
     int (*ChamarFuncao)(void* obj, const char* nomeFuncao,
                         const void** args, const uint32_t* tams, int nargs,
                         void* retorno, uint32_t tamRetorno);
 
-    // ── hooks por nome: o caminho normal ────────────────────────────────────
+    // ── hooks by name: the normal path ──────────────────────────────────────
     //
-    // Filtra por índice de FName antes de despachar, então um hook em
-    // "ServerSendChatMessage" não custa nada quando o jogo executa outra coisa.
-    // Devolve o id (0 = falhou; o motivo vai no log).
+    // Filters by FName index before dispatching, so a hook on
+    // "ServerSendChatMessage" costs nothing while the game executes anything
+    // else. Returns the id (0 = failed; the reason goes to the log).
     uint32_t (*HookProcessEvent)(const char* nomeFuncao,
                                  ConanFnAntes antes, ConanFnDepois depois,
                                  int prioridade);
-    // Só remove hook SEU: a API guarda qual módulo registrou cada um.
+    // Removes only YOUR hook: the API records which module registered each one.
     int (*RemoverHook)(uint32_t id);
 
-    // ── hooks por endereço ──────────────────────────────────────────────────
+    // ── hooks by address ────────────────────────────────────────────────────
     ConanRecusa (*HookFuncao)(void* endereco, void* nova, void** original);
     ConanRecusa (*HookVirtual)(void* classe, int indice, void* nova, void** original);
-    // Toda execução de Blueprint, inclusive a que ProcessEvent não vê.
-    // Medido: ~6.300/s em servidor no ar. Seu detour DEVE chamar o original.
+    // Every Blueprint execution, including what ProcessEvent does not see.
+    // Measured: ~6,300/s on a live server. Your detour MUST call the original.
     ConanRecusa (*HookExecucaoDeBlueprint)(void* nova, void** original);
     const char* (*TextoRecusa)(ConanRecusa r);
 
-    // ── rodar na thread do jogo ─────────────────────────────────────────────
+    // ── running on the game thread ──────────────────────────────────────────
     //
-    // Tocar objeto do jogo de outra thread derruba o servidor. Se o seu plugin
-    // tem thread própria, agende por aqui.
-    // A tarefa roda na THREAD DO JOGO — e agora isso é garantido, não provável.
+    // Touching a game object from another thread crashes the server. If your
+    // plugin has a thread of its own, schedule through here.
+    // The task runs on the GAME THREAD — and that is now guaranteed, not
+    // probable.
     //
-    // Como: o motor conta as chamadas de ProcessEvent por thread e elege a
-    // dominante (medido neste servidor: 19.981 de 20.000, ou 99,9%). Antes a
-    // tarefa rodava na thread que por acaso passasse pelo funil; dava certo
-    // quase sempre, pela mesma dominância — mas "quase sempre" não é garantia,
-    // e tocar no mundo pela thread errada corrompe estado devagar e sem erro.
+    // How: the runtime counts ProcessEvent calls per thread and elects the
+    // dominant one (measured on this server: 19,981 of 20,000, or 99.9%).
+    // Previously the task ran on whichever thread happened through the funnel;
+    // it worked almost always, by that same dominance — but "almost always" is
+    // not a guarantee, and touching the world from the wrong thread corrupts
+    // state slowly and without an error.
     //
-    // Enquanto a eleição não conclui (segundos), NENHUMA tarefa roda, e o log
-    // diz isso uma vez. Atrasar a primeira execução custa segundos; executá-la
-    // na thread errada custa o servidor de outra pessoa.
+    // Until the election completes (seconds), NO task runs, and the log says so
+    // once. Delaying the first execution costs seconds; running it on the wrong
+    // thread costs somebody else's server.
     uint32_t (*AgendarNaThreadDoJogo)(ConanFnTarefa tarefa, uint32_t segundos,
                                       void* contexto, int repetir);
     int      (*CancelarAgendamento)(uint32_t id);
 
-    // ── caminhos: tudo dentro da SUA pasta ──────────────────────────────────
+    // ── paths: everything inside YOUR folder ────────────────────────────────
     //
-    // Seu plugin mora em Conan-Api/Plugins/<SuaPasta>/ e guarda tudo lá.
-    // Passe o nome da SUA PASTA.
+    // Your plugin lives in Conan-Api/Plugins/<YourFolder>/ and keeps everything
+    // there. Pass the name of YOUR FOLDER.
     const char* (*CaminhoConfig)(const char* suaPasta);
     const char* (*CaminhoDados)(const char* suaPasta, const char* arquivo);
     const char* (*CaminhoRaiz)(void);
 
-    // ── ler/escrever parâmetros dentro de um hook ───────────────────────────
+    // ── read/write parameters inside a hook ─────────────────────────────────
     int (*LerParm)(ConanChamada* c, int indice, void* saida, uint32_t tam);
     int (*EscreverParm)(ConanChamada* c, int indice, const void* valor, uint32_t tam);
     int (*LerRetorno)(ConanChamada* c, void* saida, uint32_t tam);
     int (*DefinirRetorno)(ConanChamada* c, const void* valor, uint32_t tam);
 
-    // Texto que JÁ É do jogo (FString em bloco de parâmetros) para char*.
-    // Só leitura: montar FString nossa e passar ao jogo derruba o servidor.
+    // Text that ALREADY belongs to the game (an FString in a parameter block)
+    // into a char*. Read only: building our own FString and handing it to the
+    // game crashes the server.
     int (*LerTextoDoJogo)(const void* base, uint32_t offset, char* saida, int tam);
 
-    // ── diagnóstico do próprio motor ────────────────────────────────────────
+    // ── the runtime's own diagnostics ───────────────────────────────────────
     void (*EstatisticaHooks)(uint64_t* total, uint64_t* despachadas);
 
     // ═══════════════════════════════════════════════════════════════════════
-    //  ACRESCENTADOS NA VERSÃO 2
+    //  ADDED IN VERSION 2
     //
-    //  Estes vieram de migrar os nossos próprios exemplos para a tabela e
-    //  descobrir que ela não bastava. Vale registrar o que a ausência custava,
-    //  porque é o tipo de buraco que só aparece quando alguém tenta usar:
+    //  These came out of migrating our own examples onto the table and finding
+    //  it was not enough. Worth recording what their absence cost, because it
+    //  is the kind of gap that only shows up when someone tries to use it:
     //
-    //    · sem NumObjects/GetObjectByIndex, o Cartógrafo não enumera NADA — e
-    //      é dele que sai o catálogo inteiro da reflexão;
-    //    · sem FindObjects (plural), contar jogadores era impossível:
-    //      FindObject devolve o PRIMEIRO, e com dois jogadores no servidor um
-    //      plugin enxergaria um só. Não é a mesma pergunta com outro nome;
-    //    · sem NomeDeFName, um extrator não lê FField/FFieldClass/UEnum, que
-    //      não são UObject e guardam o nome em outro offset. Usar
-    //      NomeDoObjeto neles devolveria texto plausível e ERRADO;
-    //    · sem HookProcessEventTudo, o Gravador de Eventos simplesmente não
-    //      existe: ele serve para DESCOBRIR quais funções o jogo chama, e por
-    //      isso não tem nome para passar a HookProcessEvent.
+    //    · without NumObjects/GetObjectByIndex, the mapper enumerates NOTHING —
+    //      and the entire reflection catalogue comes from it;
+    //    · without FindObjects (plural), counting players was impossible:
+    //      FindObject returns the FIRST one, so with two players on the server a
+    //      plugin would see one. It is not the same question under another name;
+    //    · without NomeDeFName, an extractor cannot read FField/FFieldClass/
+    //      UEnum, which are not UObjects and keep their name at a different
+    //      offset. Using NomeDoObjeto on them would return plausible and WRONG
+    //      text;
+    //    · without HookProcessEventTudo, an event recorder simply does not
+    //      exist: its purpose is to DISCOVER which functions the game calls, so
+    //      by definition it has no name to pass to HookProcessEvent.
     // ═══════════════════════════════════════════════════════════════════════
 
-    // ── varrer o mundo ──────────────────────────────────────────────────────
+    // ── walking the world ───────────────────────────────────────────────────
     //
-    // É por aqui que um plugin de descoberta começa. `NumObjects` é o total de
-    // entradas do GUObjectArray; `GetObjectByIndex` devolve a i-ésima (pode ser
-    // NULL: há buracos no array, e isso é normal, não erro).
+    // This is where a discovery plugin starts. `NumObjects` is the total number
+    // of entries in the engine's global object array; `GetObjectByIndex`
+    // returns the i-th one (may be NULL: there are holes in the array, and that
+    // is normal, not an error).
     int   (*NumObjects)(void);
     void* (*GetObjectByIndex)(int indice);
 
-    // Todos os objetos de uma classe. Devolve quantos couberam em `saida`.
-    // `incluirFilhas` != 0 traz também as subclasses — para PlayerState, é o
-    // que faz aparecerem os jogadores de verdade.
+    // All objects of a class. Returns how many fit into `saida`.
+    // `incluirFilhas` != 0 also brings subclasses — for PlayerState, that is
+    // what makes the actual players show up.
     int (*FindObjects)(const char* nomeClasse, void** saida, int max,
                        int incluirFilhas);
 
-    // ── FName cru ───────────────────────────────────────────────────────────
+    // ── raw FName ───────────────────────────────────────────────────────────
     //
-    // Texto de um FName lido da memória, por índice. Necessário para tudo que
-    // NÃO é UObject: FField (nome em +0x20), FFieldClass (+0x00) e os pares
-    // <FName,int64> de UEnum. Devolve o número de caracteres escritos.
+    // The text of an FName read from memory, by index. Needed for everything
+    // that is NOT a UObject: FField, FFieldClass, and UEnum's <FName,int64>
+    // pairs. Returns the number of characters written.
     int (*NomeDeFName)(int32_t indice, char* saida, int tam);
 
-    // Nome COMPLETO (com classe e pacote). `NomeDoObjeto` devolve o curto, que
-    // não distingue duas instâncias da mesma classe.
+    // FULL name (with class and package). `NomeDoObjeto` returns the short one,
+    // which does not distinguish two instances of the same class.
     const char* (*NomeCompletoDoObjeto)(void* obj, char* saida, int tam);
 
-    // ── a chamada EXECUTOU mesmo? ───────────────────────────────────────────
+    // ── did the call actually EXECUTE? ──────────────────────────────────────
     //
-    // `ChamarFuncao` devolve 1 também quando o jogo FILTROU a chamada (template
-    // de Blueprint, CDO, Actor não inicializado), e aí o retorno vem do bloco
-    // zerado. Sem este sinal não dá para separar "a função respondeu false" de
-    // "a função não rodou" — e os dois viram o mesmo `false` no seu plugin.
+    // `ChamarFuncao` also returns 1 when the game FILTERED the call (Blueprint
+    // template, CDO, uninitialised Actor), and then the return value comes from
+    // a zeroed block. Without this signal you cannot separate "the function
+    // answered false" from "the function did not run" — and both become the
+    // same `false` in your plugin.
     int (*UltimaChamadaExecutou)(void);
 
-    // ── o CURINGA: hook em TODA função ──────────────────────────────────────
+    // ── the WILDCARD: hook on EVERY function ────────────────────────────────
     //
-    // Não filtra por nome: dispara para tudo que passa pelo funil. Serve para
-    // DESCOBRIR o que o jogo chama, quando você ainda não sabe o nome.
+    // Does not filter by name: fires for everything through the funnel. Its
+    // purpose is to DISCOVER what the game calls, when you do not know the name
+    // yet.
     //
-    // CUSTA CARO e tem prazo de validade de propósito: `segundos` desliga
-    // sozinho. Ligado no arranque do servidor, ele impediu o mundo de terminar
-    // de carregar — travou em 4,35 GB em vez de 8,7 GB. Ligue com o servidor
-    // já de pé, colha o que precisa, e deixe expirar.
+    // IT IS EXPENSIVE and expires on purpose: `segundos` switches it off by
+    // itself. Enabled at server startup, it stopped the world from finishing
+    // its load — stalled at 4.35 GB instead of 8.7 GB. Enable it with the server
+    // already up, collect what you need, and let it expire.
     uint32_t (*HookProcessEventTudo)(ConanFnAntes antes, uint32_t segundos);
 
     // ═══════════════════════════════════════════════════════════════════════
-    //  ACRESCENTADOS NA VERSÃO 3 — FALAR COM O JOGADOR
+    //  ADDED IN VERSION 3 — TALKING TO THE PLAYER
     //
-    //  Até aqui, todo plugin era MUDO: dava para ler o chat, cancelar comando e
-    //  escrever no log, mas não para responder. Uma loja não dizia "você
-    //  comprou", um teleporte não dizia "pronto", um menu de ajuda era
-    //  impossível.
+    //  Until here, every plugin was MUTE: it could read chat, cancel a command
+    //  and write to the log, but not answer. A shop could not say "you
+    //  bought", a teleport could not say "done", a help menu was impossible.
     //
-    //  A causa era estrutural e está medida: montar uma FString apontando para
-    //  buffer SEU e passá-la ao jogo derruba o servidor. O jogo destrói o bloco
-    //  de parâmetros ao retornar e chama o alocador DELE sobre memória SUA.
+    //  The cause was structural and is measured: building an FString pointing
+    //  at YOUR buffer and handing it to the game crashes the server. The game
+    //  destroys the parameter block on return and calls ITS allocator on YOUR
+    //  memory.
     //
-    //  Resolvido pedindo ao próprio jogo que aloque, e sobrescrevendo o
-    //  conteúdo. Você não precisa saber disso — passe `const char*` e pronto.
+    //  Solved by asking the game itself to allocate, and overwriting the
+    //  contents. You do not need to know any of that — pass a `const char*`.
     // ═══════════════════════════════════════════════════════════════════════
 
-    // Anuncia para TODOS os jogadores conectados. Devolve 1 se a chamada
-    // chegou ao jogo.
+    // Announces to ALL connected players. Returns 1 if the call reached the
+    // game.
     //
-    //     g_api->MensagemParaTodos("O servidor reinicia em 5 minutos.");
+    //     g_api->MensagemParaTodos("Server restarts in 5 minutes.");
     int (*MensagemParaTodos)(const char* texto);
 
-    // Fala com UM jogador, pelo nome que ele usa no jogo. O nome vem, por
-    // exemplo, do campo `userName` do chat (veja Docs/EVENTOS.md).
+    // Talks to ONE player, by the name they use in game. That name comes, for
+    // instance, from the chat's `userName` field (see Docs/EVENTOS.md).
     //
-    //     g_api->MensagemParaJogador(nome, "Kit entregue. Volte em 24h.");
+    //     g_api->MensagemParaJogador(name, "Kit delivered. Come back in 24h.");
     //
-    // Devolve 0 se o jogador não estiver conectado — trate isso, porque ele
-    // pode ter saído entre o comando e a resposta.
+    // Returns 0 if the player is not connected — handle that, because they may
+    // have left between the command and the answer.
     int (*MensagemParaJogador)(const char* nomeDoJogador, const char* texto);
 
-    // Escreve na TELA do jogador, não no chat. `playerController` é o dele —
-    // você o tem no hook de login, ou por FindObjects("ConanPlayerController").
-    // `segundos` é quanto tempo o texto fica; 0 usa o padrão (5 s).
+    // Writes on the player's SCREEN, not in chat. `playerController` is theirs —
+    // you have it in the login hook, or via FindObjects("ConanPlayerController").
+    // `segundos` is how long the text stays; 0 uses the default (5 s).
     //
-    //     g_api->MensagemNaTela(pc, "Bem-vindo ao servidor!", 8.0f);
+    //     g_api->MensagemNaTela(pc, "Welcome to the server!", 8.0f);
     //
-    // As funções de HUD do Conan recebem FText (tipo bem mais complexo, com
-    // tabela de localização). Esta usa ClientMessage, que faz o serviço com
-    // FString e é a rota clássica da Unreal para o servidor escrever na tela.
+    // Conan's HUD functions take FText (a considerably more complex type, with a
+    // localisation table). This one uses ClientMessage, which does the job with
+    // an FString and is Unreal's classic route for a server to write on screen.
     int (*MensagemNaTela)(void* playerController, const char* texto, float segundos);
 
-    // ── v4: TEXTO COM MEMORIA DO JOGO ───────────────────────────────────────
+    // ── v4: TEXT BACKED BY GAME MEMORY ──────────────────────────────────────
     //
-    // Preenchem 16 bytes com uma FString / FText que o JOGO alocou. O plugin
-    // passa esses 16 bytes como argumento de qualquer funcao que peca FString
-    // ou FText, e nao precisa saber o layout de nenhuma das duas.
+    // These fill 16 bytes with an FString / FText that the GAME allocated. The
+    // plugin passes those 16 bytes as an argument to any function taking an
+    // FString or FText, and never needs to know the layout of either.
     //
-    // POR QUE VOCE NAO PODE MONTAR ISSO SOZINHO
-    // ------------------------------------------
-    // O ProcessEvent destroi o bloco de parametros ao retornar e chama o
-    // alocador DO JOGO sobre o ponteiro que estiver la. Se for memoria do seu
-    // plugin, o servidor cai — esta medido neste projeto, nao e' teoria.
+    // WHY YOU CANNOT BUILD THIS YOURSELF
+    // -----------------------------------
+    // ProcessEvent destroys the parameter block on return and calls THE GAME'S
+    // allocator on whatever pointer is there. If that is your plugin's memory,
+    // the server crashes — measured in this project, not theory.
     //
-    // Devolvem 1 se deu certo, 0 se nao. Zero significa que a chamada seguinte
-    // NAO deve ser feita: passar 16 bytes zerados como FString e' entregar
-    // ponteiro nulo ao jogo.
+    // They return 1 on success, 0 otherwise. Zero means the following call must
+    // NOT be made: passing 16 zeroed bytes as an FString hands the game a null
+    // pointer.
     //
     //     unsigned char t[16];
-    //     if (api->CriarTextoDoJogo("Bem-vindo!", t))
-    //         api->ChamarFuncao(pc, "AlgumaCoisa", ...);
+    //     if (api->CriarTextoDoJogo("Welcome!", t))
+    //         api->ChamarFuncao(pc, "SomeFunction", ...);
     int (*CriarTextoDoJogo)(const char* texto, void* destino16Bytes);
     int (*CriarTextoRicoDoJogo)(const char* texto, void* destino16Bytes);
 
-    // ── v5: O MEMBRO PELO NOME, E SE ELE E' REPLICADO ────────────────────────
+    // ── v5: A MEMBER BY NAME, AND WHETHER IT IS REPLICATED ──────────────────
     //
-    // OffsetDoMembro devolve o offset NESTA build, resolvido pela reflexão, ou
-    // -1 se não achar. Prefira isto a gravar o número no seu plugin: offset
-    // gravado vira bomba-relógio no dia em que o jogo atualizar, e o sintoma é
-    // ler lixo achando que leu o jogo.
+    // OffsetDoMembro returns the offset ON THIS BUILD, resolved through
+    // reflection, or -1 if not found. Prefer this to baking the number into your
+    // plugin: a hardcoded offset becomes a time bomb the day the game updates,
+    // and the symptom is reading garbage while believing you read the game.
     //
-    //     const int32_t off = api->OffsetDoMembro(ator, "RelativeLocation");
-    //     if (off >= 0) api->LerMembro(ator, off, &pos, sizeof(pos));
+    //     const int32_t off = api->OffsetDoMembro(actor, "RelativeLocation");
+    //     if (off >= 0) api->LerMembro(actor, off, &pos, sizeof(pos));
     //
-    // EhReplicado responde 1 · 0 · -1. O -1 NÃO é "pode escrever": é "não sei".
+    // EhReplicado answers 1 · 0 · -1. The -1 is NOT "safe to write": it is
+    // "I do not know".
     //
-    // POR QUE VOCÊ DEVE PERGUNTAR ANTES DE ESCREVER
-    // ----------------------------------------------
-    // Escrever direto num campo que o jogo replica funciona no servidor e o
-    // cliente não vê. Em campo de posição é pior: a predição do cliente corrige
-    // de volta, e o sintoma é rubber-banding que ninguém liga a um plugin.
+    // WHY YOU SHOULD ASK BEFORE WRITING
+    // ----------------------------------
+    // Writing straight into a field the game replicates works on the server and
+    // the client never sees it. On a position field it is worse: client
+    // prediction corrects it back, and the symptom is rubber-banding that nobody
+    // connects to a plugin.
     //
-    // Quando existir uma função do jogo que faça a mudança, chame-a: ela
-    // percorre o caminho que já replica. Escrever no campo fura esse caminho.
-    // 1.222 dos 36.210 membros desta build são replicados — entre eles
+    // When a game function exists that makes the change, call it: it walks the
+    // path that already replicates. Writing the field bypasses that path.
+    // 1,222 of the 36,210 members in this build are replicated — among them
     // SceneComponent::RelativeLocation.
     int32_t (*OffsetDoMembro)(void* objeto, const char* nome);
     int     (*EhReplicado)(void* objeto, uint32_t offset);
     int     (*NomeDoMembro)(void* objeto, uint32_t offset, char* saida, int tam);
 
-    // ── v6: CHAMAR COM PARAMETRO DE SAIDA, SEM LINKAR NADA ──────────────────
+    // ── v6: CALLING WITH OUTPUT PARAMETERS, STILL LINKING NOTHING ───────────
     //
-    // POR QUE ISTO EXISTE
-    // -------------------
-    // O `ConanSDK.h` — 8.287 classes do jogo com assinatura de verdade — nao ia
-    // no pacote, e o README o anunciava. A causa: ele emite `ConanApi::Call<>` e
-    // `ConanApi::CallSaida<>`, que chamam `InvokeRaw`/`ResolveFunction`, e essas
-    // moram na libconanapi.a. Ou seja: usar o SDK exigia linkar a nossa
-    // biblioteca — exatamente o que o modelo de tabela existe para evitar, e o
-    // contrario do que a capa promete ("seu compilador nao importa").
+    // WHY THIS EXISTS
+    // ---------------
+    // `ConanSDK.h` — the game's classes with real signatures — was not shipping
+    // in the package while the README advertised it. The cause: it emits
+    // `ConanApi::Call<>` and `ConanApi::CallSaida<>`, which called internal
+    // helpers that lived in a static library. Using the SDK therefore required
+    // linking our library — exactly what the table model exists to avoid, and
+    // the opposite of what the front page promises ("your compiler does not
+    // matter").
     //
-    // `ChamarFuncao` (v1) ja' cobria ENTRADA e retorno. Faltava o que o jogo faz
-    // em 6.157 das assinaturas: escrever num slot de SAIDA. Sem isto, um terco
-    // do SDK nao tinha como funcionar por tabela.
+    // `ChamarFuncao` (v1) already covered INPUT and return. What was missing is
+    // what the game does in 6,157 of the signatures: writing into an OUTPUT
+    // slot. Without this, a third of the SDK could not work through the table.
     //
-    // Os quatro tipos de saida nao sao capricho — cada um tem um jeito so' de
-    // ser lido em seguranca:
+    // The four output types are not fussiness — each has exactly one way of
+    // being read safely:
 
-    // Como ChamarFuncao, mais os slots de saida. Devolve 1 se executou.
-    // As saidas sao copiadas DEPOIS da chamada e ANTES de o jogo destruir o
-    // bloco de parametros — que e' a unica janela em que elas valem.
+    // Like ChamarFuncao, plus the output slots. Returns 1 if it executed.
+    // Outputs are copied AFTER the call and BEFORE the game destroys the
+    // parameter block — which is the only window in which they are valid.
     int (*ChamarFuncaoEx)(void* obj, const char* nomeFuncao,
                           const void** args, const uint32_t* tams, int nargs,
                           const ConanSaida* saidas, int nsaidas,
                           void* retorno, uint32_t tamRetorno);
 
-    // Campos novos entram AQUI, no fim, e `versao` sobe. Nunca no meio.
+    // New fields go HERE, at the end, and `versao` increments. Never in the
+    // middle.
 } ConanApiTabela;
 
 // ============================================================================
-//  O CONTRATO DO SEU PLUGIN
+//  YOUR PLUGIN'S CONTRACT
 //
-//  Exporte esta função. O carregador a procura por nome; sem ela, sua DLL é
-//  carregada e nada acontece.
+//  Export this function. The loader looks it up by name; without it, your DLL
+//  is loaded and nothing happens.
 //
 //      extern "C" __declspec(dllexport)
 //      void ConanPluginCarregar(const ConanApiTabela* api);
 //
-//  Opcional, chamada quando o servidor desce de forma limpa:
+//  Optional, called when the server shuts down cleanly:
 //
 //      extern "C" __declspec(dllexport)
 //      void ConanPluginDescarregar(void);
@@ -489,8 +543,8 @@ typedef struct ConanApiTabela
 //  NÃO faça trabalho no DllMain: ali o loader do Windows segura uma trava, e
 //  chamar quase qualquer coisa trava o processo. Faça tudo no Carregar.
 // ============================================================================
-// Lado NOSSO: quem monta a tabela. Um plugin não chama isto — ele recebe o
-// ponteiro pronto em ConanPluginCarregar.
+// OUR side: whoever fills the table. A plugin never calls this — it receives
+// the ready pointer in ConanPluginCarregar.
 #ifdef __cplusplus
 }  // extern "C" — a linha abaixo é C++ de propósito, é interna nossa
 namespace ConanApi { const ConanApiTabela* TabelaDoPlugin(); }
