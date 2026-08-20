@@ -15,9 +15,9 @@
 //  renaming them would break every plugin already compiled against it.
 //
 //  All documentation is in English, and every field below is commented. A
-//  glossary is in Docs/DEVELOPERS.md. Rough guide: Ler = Read, Escrever =
-//  Write, Chamar = Call, Carregar = Load, Nome = Name, Tabela = Table,
-//  Caminho = Path, Jogo = Game, Tarefa = Task.
+//  glossary is in Docs/DEVELOPERS.md. Rough guide: "Ler" = read, "Escrever" =
+//  write, "Chamar" = call, "Carregar" = load, "Nome" = name, "Tabela" = table,
+//  "Caminho" = path, "Jogo" = game, "Tarefa" = task.
 //
 //  ────────────────────────────────────────────────────────────────────────────
 //  HOW IT WORKS
@@ -540,13 +540,13 @@ typedef struct ConanApiTabela
 //      extern "C" __declspec(dllexport)
 //      void ConanPluginDescarregar(void);
 //
-//  NÃO faça trabalho no DllMain: ali o loader do Windows segura uma trava, e
-//  chamar quase qualquer coisa trava o processo. Faça tudo no Carregar.
+//  Do NO work in DllMain: Windows holds a loader lock there, and calling almost
+//  anything deadlocks the process. Do everything in Carregar.
 // ============================================================================
 // OUR side: whoever fills the table. A plugin never calls this — it receives
 // the ready pointer in ConanPluginCarregar.
 #ifdef __cplusplus
-}  // extern "C" — a linha abaixo é C++ de propósito, é interna nossa
+}  // extern "C" — the line below is C++ on purpose; it is internal to us
 namespace ConanApi { const ConanApiTabela* TabelaDoPlugin(); }
 extern "C" {
 #endif

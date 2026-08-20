@@ -99,8 +99,8 @@ extern "C" {
 // the only way to return text across a DLL boundary without agreeing on an
 // allocator.
 #define CONAN_PERM_MAX_ID     64    // platform id: 17 digits today, ample slack
-#define CONAN_PERM_MAX_GRUPO  64    // nome de grupo
-#define CONAN_PERM_MAX_NO    128    // nó de permissão, ex. "vip.kit.diario"
+#define CONAN_PERM_MAX_GRUPO  64    // group name
+#define CONAN_PERM_MAX_NO    128    // permission node, e.g. "vip.kit.diario"
 
 // file names, for anyone who wants to look the module up themselves
 #define CONAN_PERM_DLL       "ConanPermission.dll"
@@ -215,8 +215,8 @@ typedef struct ConanPermApi
 
     // ── ADD NEW FIELDS HERE, AT THE END, AND ONLY HERE ──────────────────────
     // Whoever adds one: bump `versao`, do NOT bump `abi`, and `tamanho` grows
-    // sozinho. Plugin antigo nem percebe; plugin novo confere com
-    // ConanPermTemCampo() antes de chamar.
+    // on its own. An older plugin never notices; a newer one checks with
+    // ConanPermTemCampo() before calling.
 } ConanPermApi;
 
 // The factory exported by ConanPermission.dll. It takes the ABI the CALLER
@@ -233,7 +233,7 @@ typedef const ConanPermApi* (*ConanPermFabrica)(uint32_t abiDoChamador);
 CONAN_PERM_TALVEZ static const ConanPermApi* ConanPermObter(void)
 {
     static const ConanPermApi* g_api  = 0;
-    static DWORD               g_prox = 0;   // quando tentar de novo
+    static DWORD               g_prox = 0;   // when to try again
 
     if (g_api) return g_api;   // success is cached forever
 
@@ -326,10 +326,10 @@ CONAN_PERM_TALVEZ static const ConanPermApi* ConanPermObter(void)
     return g_api;
 }
 
-// O Permission está instalado e de pé?
+// Is Permission installed and up?
 CONAN_PERM_TALVEZ static int ConanPermDisponivel(void) { return ConanPermObter() != 0; }
 
-// Versão do plugin instalado (10203 == 1.2.3), ou 0.
+// Version of the installed plugin (10203 == 1.2.3), or 0.
 CONAN_PERM_TALVEZ static uint32_t ConanPermVersao(void)
 { const ConanPermApi* a = ConanPermObter(); return a ? a->versao : 0u; }
 

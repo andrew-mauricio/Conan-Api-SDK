@@ -146,11 +146,11 @@ namespace ConanApi
     struct FuncInfo
     {
         void*    Function;          // a UFunction
-        uint16_t ParmsSize;         // tamanho do bloco de parâmetros
-        uint8_t  NumParms;          // quantos parâmetros, retorno incluído
-        uint8_t  NumEntrada;        // quantos são de ENTRADA (sem o retorno)
-        uint16_t Offset[MAX_PARMS]; // offset de cada parâmetro dentro do bloco
-        uint16_t OffsetRetorno;     // 0xFFFF quando a função não devolve nada
+        uint16_t ParmsSize;         // size of the parameter block
+        uint8_t  NumParms;          // how many parameters, return included
+        uint8_t  NumEntrada;        // how many are INPUTS (excluding the return)
+        uint16_t Offset[MAX_PARMS]; // each parameter's offset inside the block
+        uint16_t OffsetRetorno;     // 0xFFFF when the function returns nothing
 
         // ── SIZE of each parameter (reflection's ElementSize) ───────────────
         //
@@ -197,14 +197,14 @@ namespace ConanApi
     int      NumObjects();
     UObject* GetObjectByIndex(int i);
 
-    // primeiro objeto da classe (ou de uma filha dela, com incluirFilhas)
+    // the first object of the class (or of a subclass, with incluirFilhas)
     UObject* FindObject(const char* nomeClasse, bool incluirFilhas = true);
 
-    // todos eles; devolve quantos couberam em `saida`
+    // all of them; returns how many fit into `saida`
     int      FindObjects(const char* nomeClasse, UObject** saida, int max,
                          bool incluirFilhas = true);
 
-    // o objeto padrão da classe (CDO) — existe mesmo sem instância no mundo
+    // the class's default object (CDO); exists even with no instance in the world
     UObject* GetDefaultObject(const char* nomeClasse);
 
     // ── low-level tools ─────────────────────────────────────────────────────
@@ -251,7 +251,7 @@ namespace ConanApi
     // On the player's SCREEN (not in chat). `playerController` is theirs.
     bool        MensagemNaTela(void* playerController, const char* texto, float segundos);
 
-    // ── onde o plugin guarda as coisas dele ─────────────────────────────────
+    // ── where a plugin keeps its own things ─────────────────────────────────
     //
     // Every plugin needs somewhere for configuration and data, and "the current
     // directory" won't do: the game process's cwd isn't guaranteed and can
@@ -281,12 +281,12 @@ namespace ConanApi
     // that isn't there, so an older installation keeps working.
     const char* CaminhoConfig(const char* plugin);
     const char* CaminhoDados(const char* plugin, const char* arquivo);
-    const char* CaminhoDados(const char* arquivo);   // antiga: .../Dados/<arquivo>
+    const char* CaminhoDados(const char* arquivo);   // old layout: .../Dados/<file>
 
     // ── plugin registration ─────────────────────────────────────────────────
     // The loader calls this; the plugin needn't know how it was loaded.
     void     Log(const char* fmt, ...);
-    bool     Pronta();          // as âncoras conferiram? só então é seguro usar
+    bool     Pronta();          // did the anchors check out? only then is it safe to use
 
     // ── how much may be written starting at an offset in the block ──────────
     //
@@ -353,7 +353,7 @@ namespace ConanApi
         return (fim > off) ? (fim - off) : 0u;
     }
 
-    // ── empacotar os argumentos no bloco de parâmetros ──────────────────────
+    // ── packing the arguments into the parameter block ──────────────────────
     //
     // Returns `false` when ANY argument didn't fit. The caller aborts the whole
     // call: packing what worked and calling anyway would trade stack corruption
@@ -373,13 +373,13 @@ namespace ConanApi
     // FText: same principle, one step further.
     bool CriarTextoRicoDoJogo(const char* texto, void* destino16Bytes);
 
-    // ── TEXTO RICO (FText) COMO ARGUMENTO ───────────────────────────────────
+    // ── RICH TEXT (FText) AS AN ARGUMENT ────────────────────────────────────
     //
     //     pc->ClientShowMessageBox(ConanApi::TextoRico("Titulo"),
     //                              ConanApi::TextoRico("Mensagem"));
     //
-    // FText e' o que as funcoes de INTERFACE do Conan pedem — notificacao,
-    // caixa de mensagem, rotulo. Sem isto, 838 parametros ficavam sem tipo.
+    // FText is what Conan's INTERFACE functions ask for: notification,
+    // message box, label. Without this, 838 parameters were left untyped.
     struct TextoRico
     {
         unsigned char bruto[16];
@@ -435,9 +435,9 @@ namespace ConanApi
         explicit Nome(const char* s);
     };
 
-    // ── TEXTO COMO SAIDA: ForaTexto ─────────────────────────────────────────
+    // ── TEXT AS OUTPUT: ForaTexto ───────────────────────────────────────────
     //
-    // POR QUE E' UM TIPO SEPARADO DO Fora<T>
+    // WHY IT'S A SEPARATE TYPE FROM Fora<T>
     // --------------------------------------
     // Fora<T> copies sizeof(T) bytes from the slot into the destination. That's
     // right for int, float, FVector, and WRONG for FString: copying those 16 bytes would
@@ -533,11 +533,11 @@ namespace ConanApi
     };
     template<typename T> inline EntreSai<T> ParaEntreSai(T& v) { return EntreSai<T>(v); }
 
-    // ── LISTA COMO SAIDA: ForaLista<T> ──────────────────────────────────────
+    // ── A LIST AS OUTPUT: ForaLista<T> ──────────────────────────────────────
     //
-    // POR QUE E' MAIS UM TIPO, E NAO O Fora<T>
-    // -----------------------------------------
-    // Um TArray no bloco de parametros e' um FScriptArray: {void* Data; int Num;
+    // WHY THIS IS YET ANOTHER TYPE, AND NOT Fora<T>
+    // ----------------------------------------------
+    // A TArray in the parameter block is an FScriptArray: {void* Data; int Num;
     // int Max}. Copying those 16 bytes would hand the plugin the GAME's pointer,
     // and ProcessEvent frees that buffer on return. The plugin would be reading
     // freed memory, which is worse than not having the output at all.
@@ -565,10 +565,10 @@ namespace ConanApi
     inline ForaLista<T> ParaForaLista(T* d, int cap, int& n)
     { return ForaLista<T>(d, cap, n); }
 
-    // ── PARAMETRO DE SAIDA: Fora<T> ─────────────────────────────────────────
+    // ── OUTPUT PARAMETER: Fora<T> ───────────────────────────────────────────
     //
-    // POR QUE ISTO EXISTE
-    // -------------------
+    // WHY THIS EXISTS
+    // ---------------
     // 7,985 functions on this build came out of ConanSDK.h as generic templates
     // — no signature, no types, no parameter names — for ONE reason only: they
     // had an OUTPUT parameter. Measured on 2026-08-19, and it was the LARGEST
@@ -653,7 +653,7 @@ namespace ConanApi
     // mechanism, and therefore no new ownership risk.
     struct EntreSaiTexto
     {
-        Texto entrada;      // a FString do jogo, ja' montada
+        Texto entrada;      // the game's FString, already built
         char* destino;
         int   tam;
         EntreSaiTexto(char* buf, int t)
@@ -685,11 +685,11 @@ namespace ConanApi
         void*    destino[MAX_PARMS];
         uint32_t offset[MAX_PARMS];
         uint32_t tam[MAX_PARMS];
-        // tam == TAM_TEXTO marca "decodifique a FString deste slot em vez de
-        // copiar bytes". Cabe no mesmo array de proposito: uma lista so para
-        // percorrer significa uma lista so para esquecer de percorrer.
+        // tam == TAM_TEXTO marks "decode this slot's FString instead of copying
+        // bytes". It shares the same array on purpose: one more list to walk is
+        // one more list to forget to walk.
         int      capTexto[MAX_PARMS];
-        // Para ForaLista: onde escrever a contagem e o tamanho de cada elemento.
+        // For ForaLista: where to write the count, and each element's size.
         int*     contagem[MAX_PARMS];
         uint32_t tamElem[MAX_PARMS];
         int      n;
@@ -713,7 +713,7 @@ namespace ConanApi
             using U = typename std::decay<T>::type;
             const uint32_t off    = fi->Offset[i];
             const uint32_t limite = EspacoNoBloco(fi, off);
-            const uint32_t medido = fi->Tamanho[i];      // 0 = não medido
+            const uint32_t medido = fi->Tamanho[i];      // 0 = not measured
 
             // Two rejections, and neither trusts the other:
             //  · doesn't FIT   — would write past the parameter (or the block);
@@ -837,9 +837,9 @@ namespace ConanApi
     inline bool EmpacotarS(const FuncInfo* fi, const char* nome, uint8_t* buf,
                            int i, SaidasPendentes* sp, EntreSai<T> v, R&&... resto)
     {
-        // Escreve como ENTRADA (reusa o Empacotar, que ja confere tamanho)...
+        // Writes it as INPUT (reusing Empacotar, which already checks size)...
         bool ok = Empacotar(fi, nome, buf, i, *v.valor);
-        // ...e anota para copiar de volta como SAIDA.
+        // ...and records it to be copied back as OUTPUT.
         if (ok && i < int(fi->NumEntrada) && i < MAX_PARMS && sp->n < MAX_PARMS)
         {
             sp->destino[sp->n]  = v.valor;
@@ -1105,9 +1105,9 @@ namespace ConanApi
             }
             if (sp.tam[k] == TAM_TEXTO)
             {
-                // FString: DECODIFICA enquanto ela ainda vale. Copiar os 16
-                // bytes daria ao plugin um ponteiro para memoria que o
-                // ProcessEvent destroi ao retornar.
+                // FString: DECODE it while it's still valid. Copying the 16
+                // bytes would hand the plugin a pointer to memory that
+                // ProcessEvent destroys on return.
                 if (sp.offset[k] + 16 <= n)
                     TextoDeSlot(buf + sp.offset[k],
                                 static_cast<char*>(sp.destino[k]), sp.capTexto[k]);
@@ -1211,7 +1211,7 @@ namespace ConanApi
         if (fi->OffsetRetorno != 0xFFFF)
         {
             const uint32_t limiteRet = EspacoNoBloco(fi, fi->OffsetRetorno);
-            const uint32_t medidoRet = fi->TamanhoRetorno;   // 0 = não medido
+            const uint32_t medidoRet = fi->TamanhoRetorno;   // 0 = not measured
             temRetorno = (sizeof(RSeguro) <= limiteRet) &&
                          (medidoRet == 0 || sizeof(RSeguro) == medidoRet);
         }
@@ -1253,8 +1253,9 @@ namespace ConanApi
             if (std::memcmp(buf + fi->OffsetRetorno, sentinela, sizeof(R)) == 0)
             {
                 MarcarExecucao(false);
-                // Ninguém escreveu no retorno. Falha ALTA: quem chamou fica
-                // sabendo, em vez de receber zero achando que é resposta.
+                // Nobody wrote into the return slot. Fail LOUDLY: the caller
+                // finds out, instead of receiving zero and taking it for an
+                // answer.
                 Log("Call(\"%s\"): a funcao NAO executou (objeto template/CDO ou "
                     "Actor nao inicializado — ProcessEvent filtrou). "
                     "O valor devolvido e zero por falta de resposta, nao por "
@@ -1266,7 +1267,7 @@ namespace ConanApi
         }
     }
 
-#else   // ── PLUGIN: tudo pela tabela, sem linkar nada ─────────────────────
+#else   // ── PLUGIN: everything through the table, linking nothing ─────────
 
     // ── WHERE THE TABLE COMES FROM, ON THE PLUGIN SIDE ─────────────────────
     //
@@ -1384,7 +1385,7 @@ namespace ConanApi
             if (indice < int(MAX_PARMS)) { ent[indice] = p; tam[indice] = t; }
             if (indice + 1 > nent) nent = indice + 1;
         }
-        void Buraco()   // o slot existe, mas quem escreve nele e' o jogo
+        void Buraco()   // the slot exists, but the game is what writes into it
         {
             if (indice + 1 > nent) nent = indice + 1;
         }
@@ -1619,9 +1620,9 @@ namespace ConanApi
         struct { unsigned char b[8]; } r{};
         r = Call<decltype(r)>(lib, "Conv_StringToName", entrada);
 
-        // Um FName {0,0} e' "None" — resposta legitima para a string "None" e
-        // sinal de falha para qualquer outra. Recusar aqui evita que o plugin
-        // mande "None" achando que mandou "loja".
+        // An FName {0,0} is "None": a legitimate answer for the string "None"
+        // and a failure signal for anything else. Refusing here stops a plugin
+        // from sending "None" while believing it sent "shop".
         const bool ehNone = (r.b[0]|r.b[1]|r.b[2]|r.b[3]|r.b[4]|r.b[5]|r.b[6]|r.b[7]) == 0;
         if (ehNone && std::strcmp(s, "None") != 0) return;
 
@@ -1655,7 +1656,7 @@ namespace ConanApi
     constexpr int PROCESSEVENT_VTABLE_INDEX = 79;
 }
 
-// ── tipos mínimos da engine, só o que os acessores precisam ─────────────────
+// ── minimal engine types, only what the accessors need ─────────────────────
 struct FName            { int32_t ComparisonIndex; int32_t Number; };
 struct FString          { void* Data; int32_t Num; int32_t Max; };
 // FText is 16 bytes, not 8: measured through reflection (TextProperty's
@@ -1670,11 +1671,11 @@ struct FScriptArray     { void* Data; int32_t Num; int32_t Max; };
 struct FScriptMap       { uint8_t _opaco[80]; };
 struct FScriptSet       { uint8_t _opaco[80]; };
 struct FWeakObjectPtr   { int32_t ObjectIndex; int32_t ObjectSerialNumber; };
-struct FSoftObjectPtr   { uint8_t _opaco[40]; };   // medido: 40, não 24
+struct FSoftObjectPtr   { uint8_t _opaco[40]; };   // measured: 40, not 24
 struct FScriptDelegate  { FWeakObjectPtr Object; FName FunctionName; };
 struct FMulticastScriptDelegate { FScriptArray Invocations; };
 struct FScriptInterface { void* Object; void* Interface; };
-struct FVector          { double X, Y, Z; };     // UE5 usa double por padrão
+struct FVector          { double X, Y, Z; };     // UE5 uses double by default
 struct FRotator         { double Pitch, Yaw, Roll; };
 struct FVector2D        { double X, Y; };
 
@@ -1725,7 +1726,7 @@ struct FVector2D        { double X, Y; };
 // error that only appears at link time, far from the cause.
 namespace ConanApi { std::string TextoDoJogo(const FString& s); }
 
-// ── referência a um membro, resolvida por offset ────────────────────────────
+// ── a reference to a member, resolved by offset ─────────────────────────────
 template<typename T>
 struct FieldRef
 {
@@ -1741,20 +1742,20 @@ struct FieldRef
     T* operator->() const { return ptr(); }
 };
 
-// ── referência a um BIT dentro de um byte compartilhado ─────────────────────
+// ── a reference to a BIT inside a shared byte ───────────────────────────────
 //
-// POR QUE ISTO EXISTE, E O DEFEITO QUE ELE CONSERTA
-// -------------------------------------------------
-// Vários booleanos da Unreal compartilham o MESMO byte — são bitfield. Em
-// `Actor`, SETE bools moram no offset 104, distinguidos só pela máscara:
+// WHY THIS EXISTS, AND THE DEFECT IT FIXES
+// -----------------------------------------
+// Several Unreal booleans share the SAME byte: they're bitfields. In `Actor`,
+// SEVEN bools live at offset 104, told apart only by the mask:
 //
-//     bNetTemporary          0x68  máscara 0x01
-//     bOnlyRelevantToOwner   0x68  máscara 0x04
-//     bAlwaysRelevant        0x68  máscara 0x08
-//     bReplicateMovement     0x68  máscara 0x10
-//     bCallPreReplication    0x68  máscara 0x20
-//     ...                    0x68  máscara 0x40
-//     bHidden                0x68  máscara 0x80
+//     bNetTemporary          0x68  mask 0x01
+//     bOnlyRelevantToOwner   0x68  mask 0x04
+//     bAlwaysRelevant        0x68  mask 0x08
+//     bReplicateMovement     0x68  mask 0x10
+//     bCallPreReplication    0x68  mask 0x20
+//     ...                    0x68  mask 0x40
+//     bHidden                0x68  mask 0x80
 //
 // The previous version generated a `FieldRef<bool>` for each of them, all at
 // the same offset. The result is the worst class of defect this project
@@ -1795,8 +1796,9 @@ struct BitRef
 class UObject
 {
 public:
-    // offsets medidos na reflexão viva; confirmados por um segundo caminho ao
-    // desmontar a vtable, que lê +0x08 ObjectFlags, +0x0C InternalIndex,
+    // offsets measured against live reflection; confirmed by a second route
+    // while disassembling the vtable, which reads +0x08 ObjectFlags,
+    // +0x0C InternalIndex,
     // +0x10 ClassPrivate, +0x18 NamePrivate e +0x20 Outer.
     FieldRef<UClass*> ClassPrivate() { return { this, 0x10 }; }
     FieldRef<FName>   NamePrivate()  { return { this, 0x18 }; }
@@ -1836,7 +1838,7 @@ public:
 class UClass : public UStruct
 {
 public:
-    // StaticClass da própria UClass: útil para testar se um objeto É uma classe
+    // UClass's own StaticClass: useful for testing whether an object IS a class
     static UClass* StaticClass() { return ConanApi::FindClass("Class"); }
 };
 
@@ -1845,7 +1847,7 @@ class UFunction : public UStruct
 public:
     static UClass* StaticClass() { return ConanApi::FindClass("Function"); }
     FieldRef<uint32_t> FunctionFlags() { return { this, 0xB0 }; }  // FUNC_Native = 0x400
-    FieldRef<uint8_t>  NumParms()      { return { this, 0xB4 }; }  // 100% × reflexão
-    FieldRef<uint16_t> ParmsSize()     { return { this, 0xB6 }; }  // 96,9% × reflexão
+    FieldRef<uint8_t>  NumParms()      { return { this, 0xB4 }; }  // 100% vs reflection
+    FieldRef<uint16_t> ParmsSize()     { return { this, 0xB6 }; }  // 96.9% vs reflection
     FieldRef<void*>    Func()          { return { this, 0xD8 }; }  // ponteiro nativo
 };
