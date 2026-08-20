@@ -1,68 +1,76 @@
 // ============================================================================
-//  ConanPermission.h — a interface pública do plugin Permission
+//  ConanPermission.h — the Permission plugin's public interface
 //
-//  Conan Exiles Enhanced · API de plugins C++
+//  Conan Exiles Enhanced · C++ plugin API
 //
-//  ESTE É O ÚNICO ARQUIVO QUE UM PLUGIN DE TERCEIRO PRECISA.
-//  Não há biblioteca para linkar. Não há .lib, não há .a, não há import
-//  library. Copie este header, inclua, use. Isso não é preguiça — é a decisão
-//  central do desenho, e as três razões estão abaixo.
+//  THIS IS THE ONLY FILE A THIRD-PARTY PLUGIN NEEDS.
+//  There is no library to link. No .lib, no .a, no import library. Copy this
+//  header, include it, use it. That is not laziness — it is the central design
+//  decision, and the three reasons are below.
 //
-//  ----------------------------------------------------------------------------
-//  POR QUE NÃO SE LINKA CONTRA O PERMISSION
-//  ----------------------------------------------------------------------------
-//
-//  1. PLUGIN QUE LINKA NÃO CARREGA SEM O ALVO.
-//     Uma import library grava uma dependência estática no PE. Se o dono do
-//     servidor não instalou o Permission, o Windows recusa o LoadLibrary do
-//     plugin de terceiro com "módulo não encontrado" e o loader registra falha.
-//     O plugin de VIP tem de DEGRADAR (dizer "não sei"), não deixar de existir.
-//     Com resolução em runtime, a ausência do Permission é um valor de retorno,
-//     não um erro de carregamento.
-//
-//  2. std::string E std::vector NÃO ATRAVESSAM FRONTEIRA DE DLL.
-//     MSVC e MinGW têm layouts incompatíveis de std::string (SSO de tamanhos
-//     diferentes), std::vector e std::shared_ptr; e cada um aloca no SEU heap.
-//     Passar um std::string do plugin para o Permission compilado no outro
-//     compilador não dá erro de link: dá corrupção silenciosa de memória, ou
-//     free() no heap errado — que é o defeito PIOR, o que tem cara de sucesso.
-//     Até entre duas versões do MSVC com _ITERATOR_DEBUG_LEVEL diferente isso
-//     quebra. Então: só tipos de C aqui. const char* entra, char* do chamador
-//     sai, inteiro de largura fixa no resto. Quem aloca, libera.
-//
-//  3. ATUALIZAR O PERMISSION NÃO PODE QUEBRAR O QUE JÁ FOI COMPILADO.
-//     A tabela de funções abaixo é uma struct POD com `tamanho` e `abi` no
-//     começo. Campo novo entra SÓ NO FIM; nada é reordenado nem removido,
-//     nunca. Um plugin compilado hoje continua chamando os mesmos offsets
-//     amanhã, e um plugin novo descobre com `tamanho` se o Permission antigo
-//     que está instalado tem o campo que ele quer usar. Verificação de tamanho
-//     + verificação de ABI: as duas, porque uma sozinha mente.
+//  A NOTE ON IDENTIFIER NAMES
+//  --------------------------
+//  The identifiers here are Portuguese (ConanPermTem, id_do_controller,
+//  se_ausente). They are part of the published ABI and renaming them would
+//  break every plugin already compiled against it. Rough guide: Tem = Has,
+//  Grupos = Groups, se_ausente = if_absent, conceder = grant, revogar = revoke.
 //
 //  ----------------------------------------------------------------------------
-//  COMO USAR
+//  WHY YOU DO NOT LINK AGAINST PERMISSION
+//  ----------------------------------------------------------------------------
+//
+//  1. A PLUGIN THAT LINKS WILL NOT LOAD WITHOUT ITS TARGET.
+//     An import library writes a static dependency into the PE. If the server
+//     owner did not install Permission, Windows refuses LoadLibrary on the
+//     third-party plugin with "module not found" and the loader records a
+//     failure. A VIP plugin has to DEGRADE (answer "I do not know"), not cease
+//     to exist. With runtime resolution, Permission's absence is a return
+//     value, not a load error.
+//
+//  2. std::string AND std::vector DO NOT CROSS A DLL BOUNDARY.
+//     MSVC and MinGW have incompatible layouts for std::string (different SSO
+//     sizes), std::vector and std::shared_ptr; and each allocates on ITS OWN
+//     heap. Passing a std::string from the plugin to a Permission built with
+//     the other compiler produces no link error: it produces silent memory
+//     corruption, or a free() on the wrong heap — which is the WORSE defect,
+//     the one that looks like success. It even breaks between two MSVC versions
+//     with different _ITERATOR_DEBUG_LEVEL. So: C types only here. const char*
+//     goes in, the caller's char* comes out, fixed-width integers for the rest.
+//     Whoever allocates, frees.
+//
+//  3. UPDATING PERMISSION MUST NOT BREAK WHAT IS ALREADY COMPILED.
+//     The function table below is a POD struct with `tamanho` and `abi` at the
+//     start. A new field goes ONLY AT THE END; nothing is reordered or removed,
+//     ever. A plugin compiled today keeps calling the same offsets tomorrow,
+//     and a new plugin discovers through `tamanho` whether the older Permission
+//     that is installed has the field it wants to use. Size check plus ABI
+//     check: both, because either one alone lies.
+//
+//  ----------------------------------------------------------------------------
+//  HOW TO USE IT
 //  ----------------------------------------------------------------------------
 //
 //      #include "Conan/ConanPermission.h"
 //
-//      // dentro do seu plugin, com o UObject* do PlayerController na mão:
+//      // inside your plugin, with the PlayerController's UObject* in hand:
 //      char id[CONAN_PERM_MAX_ID];
 //      if (ConanPermIdDoController(pc, id, sizeof(id)) > 0)
 //      {
-//          // 3º argumento: o que responder se o Permission NÃO estiver
-//          // instalado. Você escolhe — e é obrigado a escolher.
-//          if (ConanPermTem(id, "meuplugin.kit.diario", /*se_ausente=*/0) == 1)
-//              DarKit(pc);
+//          // 3rd argument: what to answer if Permission is NOT installed.
+//          // You choose — and you are required to choose.
+//          if (ConanPermTem(id, "myplugin.kit.daily", /*if_absent=*/0) == 1)
+//              GiveKit(pc);
 //      }
 //
-//  TRÊS RESPOSTAS, NUNCA DUAS. Toda consulta devolve:
-//      1  = permitido
-//      0  = negado
-//     -1  = NÃO SEI (Permission ausente, ainda subindo, ou id vazio)
+//  THREE ANSWERS, NEVER TWO. Every query returns:
+//      1  = allowed
+//      0  = denied
+//     -1  = I DO NOT KNOW (Permission absent, still starting, or empty id)
 //
-//  Um plugin que trata "não sei" como "negado" por conta própria está errando
-//  de propósito; um que trata como "permitido" abre o servidor. Por isso as
-//  funções de conveniência exigem o valor de fallback explícito no argumento:
-//  não existe padrão silencioso.
+//  A plugin that treats "I do not know" as "denied" on its own is being wrong
+//  on purpose; one that treats it as "allowed" opens the server up. That is why
+//  the convenience functions require the fallback value explicitly in the
+//  argument: there is no silent default.
 // ============================================================================
 #ifndef CONAN_PERMISSION_H
 #define CONAN_PERMISSION_H
@@ -71,7 +79,7 @@
 #include <string.h>
 
 #if !defined(_WIN32)
-#  error "O Permission só existe no servidor Windows do Conan (roda sob Wine no Linux)."
+#  error "Permission only exists on Conan's Windows dedicated server (which runs under Wine on Linux)."
 #endif
 #include <windows.h>
 
@@ -79,17 +87,18 @@
 extern "C" {
 #endif
 
-// ── versão da ABI ───────────────────────────────────────────────────────────
+// ── ABI version ─────────────────────────────────────────────────────────────
 //
-// Sobe SÓ quando um campo existente muda de significado — o que nunca deveria
-// acontecer. Acrescentar campo no fim NÃO sobe a ABI: para isso serve o
-// `tamanho`. Separar as duas coisas é o que permite acrescentar função sem
-// invalidar plugin já compilado.
+// Increments ONLY when an existing field changes meaning — which should never
+// happen. Appending a field at the end does NOT bump the ABI: that is what
+// `tamanho` is for. Keeping the two separate is what allows adding a function
+// without invalidating an already-compiled plugin.
 #define CONAN_PERM_ABI 1
 
-// Tamanhos dos buffers. Fixos de propósito: buffer de tamanho fixo no chamador
-// é o único jeito de devolver texto por fronteira de DLL sem combinar alocador.
-#define CONAN_PERM_MAX_ID     64    // id de plataforma: 17 dígitos hoje, folga larga
+// Buffer sizes. Fixed on purpose: a fixed-size buffer owned by the caller is
+// the only way to return text across a DLL boundary without agreeing on an
+// allocator.
+#define CONAN_PERM_MAX_ID     64    // platform id: 17 digits today, ample slack
 #define CONAN_PERM_MAX_GRUPO  64    // nome de grupo
 #define CONAN_PERM_MAX_NO    128    // nó de permissão, ex. "vip.kit.diario"
 

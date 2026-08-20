@@ -249,22 +249,22 @@ namespace ConanApi
 
     // ── onde o plugin guarda as coisas dele ─────────────────────────────────
     //
-    // Todo plugin precisa de um lugar para configuração e dados, e "o diretório
-    // atual" não serve: o cwd do processo do jogo não é garantido e pode mudar.
-    // Estes caminhos são derivados do endereço do EXECUTÁVEL, que é fixo.
+    // Every plugin needs somewhere for configuration and data, and "the current
+    // directory" won't do: the game process's cwd isn't guaranteed and can
+    // change. These paths derive from the EXECUTABLE's location, which is fixed.
     //
-    // A árvore é única e fica ao lado do executável:
+    // There's a single tree, next to the executable:
     //
-    //     <Win64>/Conan-Api/Plugins/     as DLLs
-    //     <Win64>/Conan-Api/Config/      um arquivo por plugin
-    //     <Win64>/Conan-Api/Dados/       bancos e estado
-    //     <Win64>/Conan-Api/Logs/        registros
+    //     <Win64>/Conan-Api/Plugins/     the DLLs
+    //     <Win64>/Conan-Api/Config/      one file per plugin
+    //     <Win64>/Conan-Api/Dados/       databases and state
+    //     <Win64>/Conan-Api/Logs/        logs
     //
-    // A pasta é criada se não existir. Plugin que falha por falta de pasta é
-    // plugin que falha na instalação de metade das pessoas.
+    // The folder is created if missing. A plugin that fails for want of a folder
+    // is a plugin that fails on half the installations.
     const char* CaminhoRaiz();                       // <Win64>/Conan-Api
     const char* CaminhoConfig(const char* plugin);   // .../Config/<plugin>.json
-    // ── caminhos: UMA PASTA POR PLUGIN ──────────────────────────────────────
+    // ── paths: ONE FOLDER PER PLUGIN ────────────────────────────────────────
     //
     // Cada plugin mora em Conan-Api\\Plugins\\<SeuPlugin>\\ e guarda tudo ali:
     //
@@ -437,29 +437,29 @@ namespace ConanApi
     // POR QUE E' UM TIPO SEPARADO DO Fora<T>
     // --------------------------------------
     // Fora<T> copia sizeof(T) bytes do slot para o destino. Isso esta certo para
-    // int, float, FVector — e ERRADO para FString: copiar os 16 bytes daria ao
-    // plugin um ponteiro para memoria do JOGO, que o ProcessEvent destroi ao
-    // retornar. O plugin ficaria com ponteiro pendurado, e leria memoria
-    // liberada — pior que nao ter a saida.
+    // int, float, FVector, and WRONG for FString: copying those 16 bytes would
+    // hand the plugin a pointer into the GAME's memory, which ProcessEvent
+    // destroys on return. The plugin would be left holding a dangling pointer
+    // and reading freed memory, which is worse than not having the output.
     //
-    // O que este tipo faz: DECODIFICA. Le a FString do slot enquanto ela ainda
-    // vale, converte UTF-16 para o buffer do plugin, e nada do jogo atravessa a
-    // fronteira. Foram 238 funcoes desta build que sairam sem assinatura por
-    // causa disso.
+    // What this type does: it DECODES. It reads the FString from the slot while
+    // it is still valid, converts UTF-16 into the plugin's buffer, and nothing
+    // belonging to the game crosses the boundary. 238 functions on this build
+    // came out without a signature because of this.
     //
-    //     char nome[128];
-    //     obj->GetStringAttribute(..., ConanApi::ParaForaTexto(nome, sizeof(nome)));
-    // Decodifica a FString que esta NESTE slot para um buffer do plugin.
-    // Declarada aqui e implementada no ConanApi.cpp, que e' onde vive a leitura
-    // validada de memoria do jogo.
-    // Refaz a parte da conferencia de build que ficou pendente no arranque.
-    // Chamada pelo carregador DEPOIS de o mundo montar — no arranque as
-    // UFunction nativas ainda nao existem, e o I-4 sairia "4 de 6" para sempre.
+    //     char name[128];
+    //     obj->GetStringAttribute(..., ConanApi::ParaForaTexto(name, sizeof(name)));
+    // Decodes the FString sitting in THIS slot into a plugin buffer. Declared
+    // here and implemented on the runtime side, where validated reads of game
+    // memory live.
+    // Redoes the part of the build check that was left pending at startup.
+    // Called by the loader AFTER the world comes up: at startup the native
+    // UFunctions don't exist yet, so that invariant would read "4 of 6" forever.
     bool ReconferirBuild();
 
-    // Arma os hooks que foram PEDIDOS antes de a reflexao existir. Chamada uma
-    // vez, no instante em que o mundo monta — e' o que faz um comando responder
-    // no primeiro segundo em vez de depois de o carregador ativar os plugins.
+    // Arms the hooks that were REQUESTED before reflection existed. Called once,
+    // the instant the world comes up. This is what lets a command answer in the
+    // first second instead of after the loader activates the plugins.
     void DrenarPendentes();
 
     // ── MEMBRO POR NOME, RESOLVIDO EM RUNTIME ───────────────────────────────
@@ -536,20 +536,20 @@ namespace ConanApi
     // POR QUE E' MAIS UM TIPO, E NAO O Fora<T>
     // -----------------------------------------
     // Um TArray no bloco de parametros e' um FScriptArray: {void* Data; int Num;
-    // int Max}. Copiar esses 16 bytes daria ao plugin o PONTEIRO do jogo — e o
-    // ProcessEvent libera esse buffer ao retornar. O plugin ficaria lendo memoria
-    // liberada, que e' pior que nao ter a saida.
+    // int Max}. Copying those 16 bytes would hand the plugin the GAME's pointer,
+    // and ProcessEvent frees that buffer on return. The plugin would be reading
+    // freed memory, which is worse than not having the output at all.
     //
-    // Aqui se COPIAM OS ELEMENTOS para o buffer do plugin enquanto o array ainda
-    // vale. Nada do jogo atravessa a fronteira, e o tempo de vida passa a ser do
-    // plugin.
+    // Here the ELEMENTS are COPIED into the plugin's buffer while the array is
+    // still valid. Nothing belonging to the game crosses the boundary, and the
+    // lifetime becomes the plugin's.
     //
-    // Eram 1.653 parametros de saida e 541 de retorno sem assinatura por causa
-    // disto — funcoes como BoxOverlapActors, que devolve TArray<AActor*> e e'
-    // exatamente o que um plugin de area/evento precisa.
+    // 1,653 output parameters and 541 return values were left without a
+    // signature because of this. Functions like BoxOverlapActors, which returns
+    // TArray<AActor*> and is exactly what an area or event plugin needs.
     //
-    //     AActor* achados[32]; int n = 0;
-    //     lib->BoxOverlapActors(..., ConanApi::ParaForaLista(achados, 32, n));
+    //     AActor* found[32]; int n = 0;
+    //     lib->BoxOverlapActors(..., ConanApi::ParaForaLista(found, 32, n));
     template<typename T>
     struct ForaLista
     {
@@ -743,21 +743,21 @@ namespace ConanApi
         return ok && restoOk;
     }
 
-    // ── a chamada, com retorno tipado opcional ─────────────────────────────
+    // ── the call, with an optional typed return ────────────────────────────
     //
-    //     pc->UnbanPlayer(id);                    // sem retorno
-    //     float v = ator->GetDistanceTo<float>(o) // com retorno
+    //     pc->UnbanPlayer(id);                     // no return
+    //     float v = actor->GetDistanceTo<float>(o) // with a return
     //
-    // ── EMPACOTAR COM SAIDA ─────────────────────────────────────────────────
+    // ── PACKING WITH OUTPUTS ────────────────────────────────────────────────
     //
-    // Espelha o Empacotar acima, com uma diferenca: quando o argumento e'
-    // Fora<T>, o slot NAO recebe valor (a funcao e' quem escreve nele) e o
-    // destino do plugin fica anotado para a copia de volta.
+    // Mirrors the Empacotar above, with one difference: when the argument is a
+    // Fora<T>, the slot receives NO value (the function is what writes into it)
+    // and the plugin's destination is recorded for the copy back.
     //
-    // Duplicar a recursao em vez de acrescentar um parametro ao Empacotar
-    // original e deliberado: aquele e' o caminho quente, usado por todo plugin
-    // ja compilado, e mexer nele por causa de um recurso novo trocaria um
-    // ganho por um risco em codigo que ja funciona.
+    // Duplicating the recursion instead of adding a parameter to the original
+    // Empacotar is deliberate: that one is the hot path, used by every plugin
+    // already compiled, and touching it for the sake of a new feature would
+    // trade a gain for a risk in code that already works.
     inline bool EmpacotarS(const FuncInfo*, const char*, uint8_t*, int,
                            SaidasPendentes*) { return true; }
 
@@ -1007,41 +1007,35 @@ namespace ConanApi
         return ok && r;
     }
 
-    // ── A CHAMADA COM SAIDA ─────────────────────────────────────────────────
+    // ── THE CALL WITH OUTPUTS ───────────────────────────────────────────────
     //
-    // Identica ao Call, mais o passo que faltava: depois do InvokeRaw, os slots
-    // marcados como Fora<T> sao copiados para o destino do plugin.
+    // Identical to Call, plus the step that was missing: after invoking, the
+    // slots marked as Fora<T> are copied into the plugin's destination.
     //
-    // A copia acontece SO se a funcao executou de verdade. Se o ProcessEvent
-    // filtrou a chamada (CDO, template de Blueprint, Actor nao inicializado), o
-    // bloco continua com o que estava — copiar dali entregaria lixo com cara de
-    // resposta, que e' o defeito que o sentinela existe para impedir.
-    // ── A CHAMADA COM SAIDA ─────────────────────────────────────────────────
-    //
-    // Identica ao Call, mais o passo que faltava: depois do InvokeRaw, os slots
-    // marcados como Fora<T> sao copiados para o destino do plugin.
-    //
-    // A copia acontece SO se a funcao executou de verdade. Se o ProcessEvent
-    // filtrou a chamada (CDO, template de Blueprint, Actor nao inicializado), o
-    // bloco continua com o que estava — copiar dali entregaria lixo com cara de
-    // resposta, que e' o defeito que o sentinela existe para impedir.
+    // The copy happens ONLY if the function actually executed. If ProcessEvent
+    // filtered the call (CDO, Blueprint template, uninitialised Actor), the
+    // block still holds whatever was there, and copying from it would hand back
+    // garbage wearing the face of an answer, which is the defect the sentinel
+    // exists to prevent.
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  DOIS CAMINHOS PARA A MESMA CHAMADA, E POR QUE PRECISAM SER DOIS
+//  TWO PATHS FOR THE SAME CALL, AND WHY THERE HAVE TO BE TWO
 //
-//  MOTOR (CONAN_MOTOR definido): usa InvokeRaw e o FuncInfo direto. E' quem
-//  tem o mapa da funcao — offsets de cada slot, tamanhos medidos, offset do
-//  retorno — e por isso e' quem valida.
+//  RUNTIME (CONAN_MOTOR defined): invokes directly, with the function record in
+//  hand. It holds the map of the function (each slot's offset, the measured
+//  sizes, the return offset) and that is why it is the side that validates.
 //
-//  PLUGIN (o padrao): nao tem InvokeRaw, nao tem FuncInfo, e NAO PODE ter: se
-//  tivesse, precisaria linkar a libconanapi.a, e o modelo de tabela morre
-//  junto com a promessa "seu compilador nao importa". Aqui as chamadas viram
-//  ChamarFuncao/ChamarFuncaoEx da tabela: o plugin entrega ponteiros e
-//  tamanhos, o motor confere contra o FuncInfo real e recusa o que nao bate.
+//  PLUGIN (the default): has neither, and CANNOT have them. If it did, it would
+//  need to link our static library, and the table model dies along with the
+//  promise that your compiler doesn't matter. Here the calls become the table's
+//  ChamarFuncao / ChamarFuncaoEx: the plugin hands over pointers and sizes, the
+//  runtime checks them against the real function record and refuses what
+//  doesn't match.
 //
-//  ISTO E' O QUE DESTRAVA O ConanSDK.h. Ate a v2.4.0 o header de 8.287 classes
-//  emitia `ConanApi::Call<>`, que so' existia no motor — entao o SDK que o
-//  README anunciava nao podia ir no pacote. Com o caminho de plugin, ele vai.
+//  THIS IS WHAT UNLOCKS ConanSDK.h. Until v2.4.0 the generated header emitted
+//  `ConanApi::Call<>`, which only existed on the runtime side, so the SDK the
+//  README advertised couldn't ship in the package. With the plugin path, it
+//  ships.
 // ═══════════════════════════════════════════════════════════════════════════
 #ifdef CONAN_MOTOR
 
