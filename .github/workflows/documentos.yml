@@ -1,15 +1,15 @@
-# Guarda dos documentos.
+# Document guard.
 #
-# Em 18/08/2026 um commit apagou o README, os dois espelhos de idioma, a
-# LICENSE, o .gitignore, o PUBLICAR-PLUGIN.md e as cinco imagens -- 11 arquivos
-# de uma vez, nenhum recriado depois. Nada reclamou, e o repositorio passou
-# doze horas sem pagina inicial e sem licenca.
+# On 2026-08-18 a single commit deleted the README, both language mirrors, the
+# LICENSE, the .gitignore, PUBLICAR-PLUGIN.md and the five images -- 11 files at
+# once, none of them recreated afterwards. Nothing complained, and the
+# repository spent twelve hours with no front page and no licence.
 #
-# Esta guarda DETECTA e marca o commit com um X vermelho. Ela NAO impede o
-# push: para impedir, seria preciso ligar branch protection nas configuracoes
-# do repositorio, o que tambem passaria a barrar push direto na main.
+# This guard DETECTS that and marks the commit with a red X. It does NOT block
+# the push: blocking would need branch protection in the repository settings,
+# which would also stop pushing straight to main.
 
-name: documentos
+name: documents
 
 on:
   push:
@@ -19,10 +19,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  conferir:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Conferir os documentos
+      - name: Check the documents
         run: python3 .github/scripts/conferir-documentos.py .

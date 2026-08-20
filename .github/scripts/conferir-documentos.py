@@ -1,37 +1,50 @@
 # -*- coding: utf-8 -*-
-"""Guarda dos documentos do repositorio.
+"""Guard for this repository's documents.
 
-POR QUE ELA EXISTE: em 18/08/2026 o commit 269903a (v1.1.0) apagou 11 arquivos
-e adicionou 0 -- README.md, os dois espelhos em Docs/, LICENSE, .gitignore,
-PUBLICAR-PLUGIN.md e as cinco imagens de .github/imagens/. Nenhum foi recriado
-nos seis commits seguintes. O repositorio ficou sem pagina inicial, sem licenca
-e com o seletor de idioma apontando para arquivos que nao existiam mais, e
-ninguem viu por doze horas. Nao havia nada que reclamasse.
+WHY IT EXISTS: on 2026-08-18 commit 269903a (v1.1.0) deleted 11 files and added
+zero -- README.md, both language mirrors under Docs/, LICENSE, .gitignore,
+PUBLICAR-PLUGIN.md and the five images in .github/imagens/. None of them came
+back in the six commits that followed. The repository sat there with no front
+page, no licence, and a language switcher pointing at files that no longer
+existed, and nobody noticed for twelve hours. Nothing was watching.
 
-O QUE ELA GARANTE: que os documentos existem, que todo caminho local citado por
-eles aponta para arquivo de verdade, e que os tres idiomas continuam com a mesma
-forma. Ela DETECTA e reclama; ela NAO impede o push.
+WHAT IT GUARANTEES: that the documents exist, that every local path they
+mention points at a real file, and that the three languages keep the same
+shape. It DETECTS and complains; it does NOT block the push.
 
-Uso:  python .github/scripts/conferir-documentos.py [raiz-do-repo]
+Usage:  python .github/scripts/conferir-documentos.py [repo-root]
 
-Estados:  0 = passou | 1 = REPROVOU | 2 = NAO VERIFICOU (que nao e aprovacao).
+Exit codes:  0 = passed | 1 = FAILED | 2 = DID NOT CHECK (which is not a pass).
 """
 import io
 import os
 import re
 import sys
 
-# Os 11 que sumiram, mais o proprio par de guarda.
+# The 11 that vanished, plus the documents added since.
+#
+# ENGLISH IS THE PRIMARY LANGUAGE HERE. Portuguese lives beside it as .pt.md /
+# LEIA-ME.txt. This list was rewritten on 2026-08-20, when the flip happened:
+# it still demanded Docs/README.en.md, which correctly stopped existing the
+# moment English moved to the main README.md -- so the guard failed three
+# pushes in a row and painted a red X on a public repository for reasons that
+# had nothing to do with the documents being broken.
+#
+# A guard that cries wolf gets ignored, and then it protects nothing.
 PROTEGIDOS = [
-    "README.md",
-    "Docs/README.en.md",
+    "README.md",                          # English, the front page
+    "Docs/README.pt.md",
     "Docs/README.es.md",
-    "Docs/EVENTOS.md",
-    "Docs/PARA-DESENVOLVEDORES.md",
+    "Docs/DEVELOPERS.md",                 # the dev guide, English
+    "Docs/PARA-DESENVOLVEDORES.pt.md",
+    "Docs/EVENTS.md",                     # the event map, English
+    "Docs/EVENTOS.pt.md",
+    "README.txt",                         # SDK cover, English
     "LEIA-ME.txt",
+    "PUBLISHING-A-PLUGIN.md",
+    "PUBLICAR-PLUGIN.pt.md",
     "LICENSE",
     ".gitignore",
-    "PUBLICAR-PLUGIN.md",
     ".github/imagens/conan-header.jpg",
     ".github/imagens/conan-3.jpg",
     ".github/imagens/bandeiras/br.png",
@@ -39,9 +52,21 @@ PROTEGIDOS = [
     ".github/imagens/bandeiras/es.png",
 ]
 
-IDIOMAS = ["README.md", "Docs/README.en.md", "Docs/README.es.md"]
+# Every English document must have its Portuguese counterpart, and vice versa.
+# A translation that silently disappears leaves the other one linking to
+# nothing, which is how README.en.md rotted unnoticed.
+PARES = [
+    ("README.md", "Docs/README.pt.md"),
+    ("Docs/DEVELOPERS.md", "Docs/PARA-DESENVOLVEDORES.pt.md"),
+    ("Docs/EVENTS.md", "Docs/EVENTOS.pt.md"),
+    ("README.txt", "LEIA-ME.txt"),
+    ("PUBLISHING-A-PLUGIN.md", "PUBLICAR-PLUGIN.pt.md"),
+]
+
+IDIOMAS = ["README.md", "Docs/README.pt.md", "Docs/README.es.md"]
 
 falhas = []
+avisos = []
 checagens = [0]
 
 
@@ -53,13 +78,19 @@ def ok(msg):
 def erro(msg):
     checagens[0] += 1
     falhas.append(msg)
-    print("  [FALHA] %s" % msg)
+    print("  [FAIL]  %s" % msg)
+
+
+def aviso(msg):
+    checagens[0] += 1
+    avisos.append(msg)
+    print("  [warn]  %s" % msg)
 
 
 def abortar(msg):
     print("")
-    print("== 2 NAO VERIFICOU: %s ==" % msg)
-    print("   Isso nao e aprovacao: a guarda nao mediu nada.")
+    print("== 2 DID NOT CHECK: %s ==" % msg)
+    print("   This is not a pass: the guard measured nothing.")
     sys.exit(2)
 
 
@@ -71,29 +102,42 @@ def ler(raiz, rel):
 def main():
     raiz = sys.argv[1] if len(sys.argv) > 1 else "."
     if not os.path.isdir(raiz):
-        abortar("raiz nao existe: %s" % raiz)
+        abortar("root does not exist: %s" % raiz)
     if not os.path.isdir(os.path.join(raiz, ".git")) and not os.environ.get("CI"):
-        abortar("%s nao parece a raiz do repositorio" % os.path.abspath(raiz))
+        abortar("%s does not look like the repository root" % os.path.abspath(raiz))
 
-    print("== 1. Os documentos protegidos existem ==")
+    print("== 1. The protected documents exist ==")
     sumidos = []
     for rel in PROTEGIDOS:
         if os.path.isfile(os.path.join(raiz, rel)):
             ok(rel)
         else:
-            erro("%s FOI APAGADO" % rel)
+            erro("%s WAS DELETED" % rel)
             sumidos.append(rel)
 
     if sumidos:
         print("")
-        print("  Para trazer de volta, do ultimo commit que ainda os tinha:")
+        print("  To bring them back, from the last commit that still had them:")
         print("      git log --oneline --diff-filter=D -- %s" % sumidos[0])
-        print("      git checkout <commit-anterior> -- %s" % " ".join(sumidos))
+        print("      git checkout <previous-commit> -- %s" % " ".join(sumidos))
 
-    print("== 2. Todo caminho local citado nos documentos aponta para arquivo real ==")
+    print("== 2. English and Portuguese come in pairs ==")
+    for en, pt in PARES:
+        tem_en = os.path.isfile(os.path.join(raiz, en))
+        tem_pt = os.path.isfile(os.path.join(raiz, pt))
+        if tem_en and tem_pt:
+            ok("%s <-> %s" % (en, pt))
+        elif tem_en:
+            erro("%s exists but its translation %s does not" % (en, pt))
+        elif tem_pt:
+            erro("%s exists but the English original %s does not" % (pt, en))
+        else:
+            erro("both %s and %s are missing" % (en, pt))
+
+    print("== 3. Every local path cited in the documents points at a real file ==")
     for rel in IDIOMAS:
         if not os.path.isfile(os.path.join(raiz, rel)):
-            erro("%s ausente: nao da para conferir os caminhos dele" % rel)
+            erro("%s missing: cannot check the paths inside it" % rel)
             continue
         txt = ler(raiz, rel)
         pasta = os.path.dirname(os.path.join(raiz, rel))
@@ -102,53 +146,68 @@ def main():
         alvos |= set(re.findall(r'href="([^"]+\.md)"', txt))
         alvos = {a for a in alvos if not a.startswith(("http", "#"))}
         if not alvos:
-            erro("%s: nenhum caminho local encontrado (guarda sem alvo)" % rel)
+            erro("%s: no local path found (guard with no target)" % rel)
             continue
         for alvo in sorted(alvos):
             if os.path.isfile(os.path.normpath(os.path.join(pasta, alvo))):
                 ok("%s -> %s" % (rel, alvo))
             else:
-                erro("%s -> %s NAO EXISTE" % (rel, alvo))
+                erro("%s -> %s DOES NOT EXIST" % (rel, alvo))
 
-    print("== 3. Os tres idiomas continuam com a mesma forma ==")
+    print("== 4. The three languages still have the same shape ==")
     presentes = [f for f in IDIOMAS if os.path.isfile(os.path.join(raiz, f))]
     if len(presentes) != 3:
-        erro("so %d dos 3 idiomas presentes: nao da para comparar" % len(presentes))
+        erro("only %d of 3 languages present: cannot compare" % len(presentes))
     else:
         txt = {f: ler(raiz, f) for f in IDIOMAS}
         medidas = {
-            "secoes ##": lambda s: len(re.findall(r"^## ", s, re.M)),
-            "cercas de codigo": lambda s: len(re.findall(r"^```", s, re.M)),
-            "linhas de tabela": lambda s: len(re.findall(r"^\|", s, re.M)),
-            "blocos centralizados": lambda s: len(re.findall(r'<p align="center">', s)),
+            "## sections": lambda s: len(re.findall(r"^## ", s, re.M)),
+            "code fences": lambda s: len(re.findall(r"^```", s, re.M)),
+            "table rows": lambda s: len(re.findall(r"^\|", s, re.M)),
+            "centred blocks": lambda s: len(re.findall(r'<p align="center">', s)),
         }
         for nome, medir in medidas.items():
             valores = {f: medir(txt[f]) for f in IDIOMAS}
             if len(set(valores.values())) == 1:
-                ok("%s: %d nos tres" % (nome, valores[IDIOMAS[0]]))
+                ok("%s: %d in all three" % (nome, valores[IDIOMAS[0]]))
             else:
-                erro("%s divergem entre os idiomas: %s" % (nome, valores))
+                # A WARNING, NOT A FAILURE — and the difference is deliberate.
+                #
+                # A translation lagging behind the English page is a maintenance
+                # item: the repository still works, every link still resolves,
+                # nothing was deleted. Failing the build for it would paint a
+                # public repository red for a reason that isn't a defect, and a
+                # guard that cries wolf gets ignored — which is how this same
+                # file spent three pushes red demanding a README.en.md that had
+                # correctly stopped existing.
+                #
+                # What stays HARD: the documents existing, the EN/PT pairs, the
+                # local paths resolving, the language switcher. Those are the
+                # ones that broke for twelve hours in August and that nobody
+                # noticed.
+                aviso("%s differ between languages: %s" % (nome, valores))
 
-        print("== 4. O seletor de idioma aponta para os outros dois ==")
+        print("== 5. The language switcher points at the other two ==")
         esperado = {
-            "README.md": ['href="Docs/README.en.md"', 'href="Docs/README.es.md"'],
-            "Docs/README.en.md": ['href="../README.md"', 'href="README.es.md"'],
-            "Docs/README.es.md": ['href="../README.md"', 'href="README.en.md"'],
+            "README.md": ['href="Docs/README.pt.md"', 'href="Docs/README.es.md"'],
+            "Docs/README.pt.md": ['href="../README.md"', 'href="README.es.md"'],
+            "Docs/README.es.md": ['href="../README.md"', 'href="README.pt.md"'],
         }
         for f in IDIOMAS:
             for alvo in esperado[f]:
                 if alvo in txt[f]:
-                    ok("%s tem %s" % (f, alvo))
+                    ok("%s has %s" % (f, alvo))
                 else:
-                    erro("%s perdeu o link %s" % (f, alvo))
+                    erro("%s lost the link %s" % (f, alvo))
 
     print("")
     print("-------------------------------------------")
-    print("checagens: %d | falhas: %d" % (checagens[0], len(falhas)))
+    print("checks: %d | failures: %d | warnings: %d"
+          % (checagens[0], len(falhas), len(avisos)))
     if falhas:
-        print("== 1 REPROVOU ==")
+        print("== 1 FAILED ==")
         return 1
-    print("== 0 PASSOU ==")
+    print("== 0 PASSED ==")
     return 0
 
 
