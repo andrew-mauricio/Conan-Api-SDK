@@ -102,199 +102,188 @@ extern "C" {
 #define CONAN_PERM_MAX_GRUPO  64    // nome de grupo
 #define CONAN_PERM_MAX_NO    128    // nó de permissão, ex. "vip.kit.diario"
 
-// nome do arquivo, para quem quiser procurar o módulo por conta própria
+// file names, for anyone who wants to look the module up themselves
 #define CONAN_PERM_DLL       "ConanPermission.dll"
 #define CONAN_PERM_FABRICA   "ConanPermissionObterApi"
 
-// Um header que a comunidade inclui não pode cuspir aviso. As conveniências
-// abaixo são `static` num header: quem usar duas e ignorar as outras oito
-// receberia oito -Wunused-function do GCC. O atributo cala isso sem esconder
-// aviso de verdade nenhum.
+// A header the community includes can't spit out warnings. The convenience
+// wrappers below are `static` in a header: anyone using two of them and
+// ignoring the other eight would get eight -Wunused-function from GCC. The
+// attribute silences that without hiding a single real warning.
 #if defined(__GNUC__) || defined(__clang__)
 #  define CONAN_PERM_TALVEZ __attribute__((unused))
 #else
 #  define CONAN_PERM_TALVEZ
 #endif
 
-// ── a tabela de funções ─────────────────────────────────────────────────────
+// ── the function table ──────────────────────────────────────────────────────
 //
-// POD puro: nenhum método virtual, nenhuma herança, nenhum tipo de C++.
-// Uma vtable de C++ também "funcionaria", e é uma armadilha: a ordem que o
-// compilador dá aos slots virtuais não é garantida pelo padrão, e MSVC e MinGW
-// divergem em herança múltipla. Ponteiro de função em struct é definido pela
-// ABI da plataforma, não pelo compilador.
+// Pure POD: no virtual methods, no inheritance, no C++ types.
+// A C++ vtable would also "work", and it's a trap: the order a compiler assigns
+// to virtual slots isn't guaranteed by the standard, and MSVC and MinGW diverge
+// under multiple inheritance. A function pointer in a struct is defined by the
+// platform ABI, not by the compiler.
 typedef struct ConanPermApi
 {
-    // ── cabeçalho: SEMPRE os quatro primeiros, SEMPRE nesta ordem ───────────
-    uint32_t tamanho;        // sizeof(ConanPermApi) como o PERMISSION compilou
-    uint32_t abi;            // CONAN_PERM_ABI que ele implementa
-    uint32_t versao;         // 10203 == 1.2.3; só para log e diagnóstico
-    uint32_t reservado;      // 0 — mantém o alinhamento de 8 dos ponteiros
+    // ── header: ALWAYS the first four, ALWAYS in this order ─────────────────
+    uint32_t tamanho;        // sizeof(ConanPermApi) as PERMISSION compiled it
+    uint32_t abi;            // the CONAN_PERM_ABI it implements
+    uint32_t versao;         // 10203 == 1.2.3; for logging and diagnostics only
+    uint32_t reservado;      // 0 — keeps the pointers 8-byte aligned
 
-    // ── o que TODA string desta ABI tem de cumprir ─────────────────────────
+    // ── what EVERY string in this ABI has to satisfy ───────────────────────
     //
-    // São `const char*` sem parâmetro de comprimento — é ABI de C, e é o preço
-    // de não passar std::string por fronteira de DLL (ver o item 2 lá em cima).
-    // Então o contrato tem de estar escrito:
+    // They're `const char*` with no length parameter. That's a C ABI, and it's
+    // the price of not passing std::string across a DLL boundary (see item 2
+    // above). So the contract has to be written down:
     //
-    //   · `jogador` termina em '\0' dentro de CONAN_PERM_MAX_ID bytes;
-    //   · `grupo`   termina em '\0' dentro de CONAN_PERM_MAX_GRUPO bytes;
-    //   · `no`      termina em '\0' dentro de CONAN_PERM_MAX_NO bytes;
-    //   · `quem`    termina em '\0' dentro de 256 bytes.
+    //   · `jogador` is '\0'-terminated within CONAN_PERM_MAX_ID bytes;
+    //   · `grupo`   is '\0'-terminated within CONAN_PERM_MAX_GRUPO bytes;
+    //   · `no`      is '\0'-terminated within CONAN_PERM_MAX_NO bytes;
+    //   · `quem`    is '\0'-terminated within 256 bytes.
     //
-    // O Permission CONFERE isso e recusa (-1 / 0) o que não cumprir. Até
-    // 17/08/2026 ele conferia só nulo e vazio, e depois entregava a string a
-    // código que caminha até o '\0' — `Tabela::Hash`, a comparação de nó em
-    // `Casa`, a construção do std::string da fila de escrita. Uma string sem
-    // terminador levava esse laço para fora do mapa, na thread do jogo, FORA da
-    // guarda SEH do loader: derrubava o servidor inteiro, não só o plugin. Não
-    // precisava de plugin malicioso — bastava um buffer mal montado.
+    // Permission CHECKS this and refuses (-1 / 0) anything that doesn't comply.
+    // Until 2026-08-17 it only checked for null and empty, then handed the
+    // string to code that walks to the '\0': the hash function, the node
+    // comparison, the std::string built for the write queue. A string with no
+    // terminator took that loop off the end of the mapping, on the game thread,
+    // OUTSIDE the loader's SEH guard: it crashed the whole server, not just the
+    // plugin. It didn't take a malicious plugin, just a badly built buffer.
     //
-    // O QUE A CONFERÊNCIA **NÃO** COBRE, dito aqui e não escondido:
-    //   · ponteiro inválido já no primeiro byte (para ler um `const char*` é
-    //     preciso dereferenciá-lo — não há defesa possível);
-    //   · string sem terminador que comece a menos de N bytes do fim de uma
-    //     região mapeada: a leitura limitada ainda cruza a borda.
-    // Fechar os dois exigiria VirtualQuery por chamada (2.551 ns medidos sob
-    // Wine, contra 145 ns da consulta inteira — 17x no laço do jogo) ou
-    // variantes com comprimento na ABI. Nenhuma das duas foi feita, e por isso
-    // está escrito em vez de prometido.
+    // WHAT THE CHECK **DOESN'T** COVER, said here rather than hidden:
+    //   · a pointer already invalid at its first byte (reading a `const char*`
+    //     means dereferencing it — there's no possible defence);
+    //   · an unterminated string starting less than N bytes from the end of a
+    //     mapped region: the bounded read still crosses the edge.
+    // Closing both would take a VirtualQuery per call (2,551 ns measured under
+    // Wine, against 145 ns for the entire query — 17x, in the game loop) or
+    // length-carrying variants in the ABI. Neither was done, so it's written
+    // down instead of promised.
 
-    // ── consulta (é o que roda no laço do jogo) ─────────────────────────────
+    // ── queries (this is what runs in the game loop) ────────────────────────
     //
-    // Responde de um instantâneo em memória, montado fora do laço. NENHUMA
-    // destas funções abre arquivo, toca no SQLite, aloca memória ou pega
-    // trava que um escritor possa estar segurando. Custo: um hash e, no pior
-    // caso, alguns compares de curinga.
+    // Answers from an in-memory snapshot built outside the loop. NONE of these
+    // functions opens a file, touches SQLite, allocates memory, or takes a lock
+    // a writer might be holding. Cost: one hash and, at worst, a few wildcard
+    // comparisons.
     //
-    // Devolvem 1 permitido · 0 negado · -1 não sei.
+    // They return 1 allowed · 0 denied · -1 don't know.
     int32_t (*tem)      (const char* jogador, const char* no);
     int32_t (*no_grupo) (const char* jogador, const char* grupo);
 
-    // Quando o VIP vence, em segundos desde 1970 (UTC).
-    //   > 0  vence nessa hora
-    //     0  pertence e nunca vence
-    //    -1  não pertence / não sei  (use no_grupo() para separar os dois)
+    // When the VIP expires, in seconds since 1970 (UTC).
+    //   > 0  expires at that time
+    //     0  belongs, and never expires
+    //    -1  doesn't belong / don't know  (use no_grupo() to tell them apart)
     int64_t (*expira_em)(const char* jogador, const char* grupo);
 
-    // Grupos do jogador, um por linha, terminado em '\0'. Devolve o tamanho
-    // que a saída PRECISARIA ter (podendo ser maior que `tam` — aí truncou),
-    // ou negativo em erro. Convenção de snprintf, que todo mundo já conhece.
+    // The player's groups, one per line, '\0'-terminated. Returns the size the
+    // output WOULD need (possibly larger than `tam`, meaning it truncated), or
+    // negative on error. The snprintf convention, which everyone already knows.
     int32_t (*grupos)   (const char* jogador, char* saida, int32_t tam);
 
-    // ── identidade ──────────────────────────────────────────────────────────
+    // ── identity ────────────────────────────────────────────────────────────
     //
-    // Traduz um UObject* de ConanPlayerController (ou de ConanPlayerState,
-    // ou de ConanCharacter) na chave que o Permission usa.
+    // Translates a UObject* of ConanPlayerController (or ConanPlayerState, or
+    // ConanCharacter) into the key Permission uses.
     //
-    // Isto está na ABI de PROPÓSITO: nenhum plugin de terceiro deveria
-    // reimplementar a extração da identidade. O caminho tem armadilhas
-    // (função de reflexão que devolve FString e vaza o buffer se chamada em
-    // laço; campo que existe só depois do login completar) e é o Permission
-    // que paga esse preço, uma vez, com cache. Se amanhã a Funcom trocar o
-    // campo, muda AQUI e todos os plugins continuam certos.
+    // This is in the ABI ON PURPOSE: no third-party plugin should reimplement
+    // identity extraction. The path has traps (a reflection function that
+    // returns an FString and leaks the buffer if called in a loop; a field that
+    // only exists after login completes) and Permission pays that price once,
+    // with a cache. If Funcom changes the field tomorrow, it changes HERE and
+    // every plugin stays correct.
     //
-    // Devolve o comprimento do id (>0), 0 se o objeto ainda não tem
-    // identidade (jogador conectando), ou negativo em erro.
+    // Returns the id's length (>0), 0 if the object has no identity yet (player
+    // still connecting), or negative on error.
     int32_t (*id_do_controller)(void* objetoDoJogo, char* saida, int32_t tam);
 
-    // ── escrita (NUNCA no laço do jogo) ─────────────────────────────────────
+    // ── writes (NEVER in the game loop) ─────────────────────────────────────
     //
-    // Enfileira para a thread escritora e volta na hora. `expira_em` em
-    // segundos desde 1970, ou 0 para nunca. `quem` vai para o diário de
-    // auditoria — quem deu VIP para quem, e quando.
-    // Devolve 1 aceito · 0 recusado (grupo inexistente, id inválido) · -1 não sei.
+    // Queues for the writer thread and returns immediately. `expira_em` is in
+    // seconds since 1970, or 0 for never. `quem` goes into the audit log: who
+    // gave VIP to whom, and when.
+    // Returns 1 accepted · 0 refused (group doesn't exist, invalid id) · -1
+    // don't know.
     int32_t (*conceder)(const char* jogador, const char* grupo,
                         int64_t expira_em, const char* quem);
     int32_t (*revogar) (const char* jogador, const char* grupo, const char* quem);
 
-    // Relê permission.json e o banco. Devolve 1 se releu, 0 se falhou.
+    // Re-reads permission.json and the database. Returns 1 if it did, 0 if it
+    // failed.
     int32_t (*recarregar)(void);
 
-    // ── ACRESCENTE CAMPO NOVO AQUI, NO FIM, E SÓ AQUI ───────────────────────
-    // Quem acrescentar: suba `versao`, NÃO suba `abi`, e o `tamanho` cresce
+    // ── ADD NEW FIELDS HERE, AT THE END, AND ONLY HERE ──────────────────────
+    // Whoever adds one: bump `versao`, do NOT bump `abi`, and `tamanho` grows
     // sozinho. Plugin antigo nem percebe; plugin novo confere com
     // ConanPermTemCampo() antes de chamar.
 } ConanPermApi;
 
-// A fábrica exportada pelo ConanPermission.dll. Recebe a ABI que o CHAMADOR
-// conhece; devolve NULL se não puder atender (ABI futura, ou o plugin ainda
-// não terminou de subir). Passar a ABI do chamador — e não só ler a do
-// callee — deixa o Permission recusar explicitamente em vez de entregar uma
-// tabela que o outro lado vai interpretar errado.
+// The factory exported by ConanPermission.dll. It takes the ABI the CALLER
+// knows; returns NULL if it can't serve that (a future ABI, or the plugin
+// hasn't finished starting). Passing the caller's ABI, rather than only reading
+// the callee's, lets Permission refuse explicitly instead of handing over a
+// table the other side will misread.
 typedef const ConanPermApi* (*ConanPermFabrica)(uint32_t abiDoChamador);
 
-// ── descoberta em runtime ───────────────────────────────────────────────────
+// ── runtime discovery ───────────────────────────────────────────────────────
 //
-// Estático e inline: cada plugin fica com a sua cópia, nada é compartilhado,
-// nada precisa ser linkado.
+// Static and inline: each plugin gets its own copy, nothing is shared, nothing
+// has to be linked.
 CONAN_PERM_TALVEZ static const ConanPermApi* ConanPermObter(void)
 {
     static const ConanPermApi* g_api  = 0;
     static DWORD               g_prox = 0;   // quando tentar de novo
 
-    if (g_api) return g_api;   // sucesso se guarda para sempre
+    if (g_api) return g_api;   // success is cached forever
 
-    // ── POR QUE A FALHA **NÃO** É GUARDADA PARA SEMPRE ──────────────────────
+    // ── WHY FAILURE IS **NOT** CACHED FOREVER ───────────────────────────────
     //
-    // Esta é a lição que a própria ConanApi::Inicializar() já pagou: ela
-    // marcava "falhou" e desistia definitivamente, e o carregamento inteiro
-    // morreu no teste real — porque a primeira consulta acontece antes de o
-    // alvo existir.
+    // This is a lesson the API's own initialisation already paid for: it marked
+    // "failed" and gave up permanently, and the entire load died in a real test,
+    // because the first query happens before the target exists.
     //
-    // Aqui o mesmo defeito tem uma causa concreta e garantida: o ConanLoader
-    // carrega as DLLs na ordem que o FindFirstFile devolve, que NÃO é
-    // especificada. Um plugin de VIP pode muito bem rodar o seu
-    // ConanPluginCarregar() ANTES de o ConanPermission.dll existir no
-    // processo. Se a ausência ficasse gravada, esse plugin ficaria cego pelo
-    // resto da vida do servidor — e o dono veria "VIP não funciona" sem uma
-    // linha de erro em lugar nenhum.
+    // Here the same defect has a concrete and guaranteed cause: the loader loads
+    // DLLs in whatever order FindFirstFile returns, which is NOT specified. A
+    // VIP plugin may well run its ConanPluginCarregar() BEFORE
+    // ConanPermission.dll exists in the process. If absence were recorded, that
+    // plugin would stay blind for the rest of the server's life, and the owner
+    // would see "VIP doesn't work" with no error line anywhere.
     //
-    // Também não se pode tentar a cada chamada: consulta em laço de jogo
-    // chamaria GetModuleHandle 60 vezes por segundo para sempre. Então:
-    // reconsulta no máximo uma vez a cada 3 segundos.
+    // Retrying on every call is not an option either: a query in the game loop
+    // would call GetModuleHandle 60 times a second forever. So: it retries at
+    // most once every 3 seconds.
     const DWORD agora = GetTickCount();
     if (g_prox && (int32_t)(agora - g_prox) < 0) return 0;
     g_prox = agora + 3000;
 
-    // GetModuleHandle primeiro: se o loader já carregou o Permission, é ele
-    // que se usa. LoadLibrary só como segunda tentativa — e por caminho
-    // absoluto derivado do executável, nunca relativo: o CWD do servidor não
-    // é a pasta do binário, e caminho relativo aqui viraria busca em DLL
-    // search path, que é justamente o vetor que o próprio loader usa para
-    // entrar. Não se convida esse risco para dentro.
+    // GetModuleHandle first: if the loader already brought Permission in, that's
+    // the one to use. LoadLibrary only as a second attempt, and by an absolute
+    // path derived from the executable, never a relative one. The server's CWD
+    // is not the binary's folder, and a relative path here would turn into a DLL
+    // search-path lookup, which is exactly the vector the loader itself uses to
+    // get in. You don't invite that risk indoors.
     HMODULE m = GetModuleHandleA(CONAN_PERM_DLL);
     if (!m)
     {
-        // ── a pasta oficial é Conan-Api; a antiga fica por compatibilidade ──
+        // ── the official folder is Conan-Api; older ones stay for compatibility
         //
-        // O loader monta `<Win64>\Conan-Api\Plugins\*.dll` (ConanLoader.cpp) e a
-        // distribuição é `distribuicao/Conan-Api/`. Então a primeira tentativa é
-        // essa, e é a que vai valer sempre.
+        // The loader scans `<Win64>\Conan-Api\Plugins\*.dll`, one folder per
+        // plugin, so Permission lives in Plugins\Permission\. That's the first
+        // attempt and the one that will always apply.
         //
-        // A pasta SEM hífen continua sendo tentada em segundo lugar de
-        // propósito: houve uma fase em que o loader procurava lá, e alguém pode
-        // ter uma instalação daquela época. Tentar as duas custa um
-        // LoadLibrary que falha; NÃO tentar custaria um servidor onde o VIP
-        // simplesmente não funciona, sem erro nenhum para investigar.
+        // The two that follow are installations from earlier phases: a loose DLL
+        // in Plugins\, and before that a folder spelled without the hyphen.
+        // Trying all three costs two LoadLibrary calls that fail; not trying
+        // would cost a server where VIP simply doesn't work, with no error to
+        // investigate.
         //
-        // Esta é a ÚNICA menção legítima à pasta antiga em todo plugins/: é
-        // busca por compatibilidade, não instrução de instalação. Por isso leva
-        // o selo abaixo, que plugins/conferir-caminhos.sh usa para não a
-        // confundir com o defeito real (três arquivos mandando o dono INSTALAR
-        // na pasta errada, e o plugin nunca carregando, sem erro no log).
-        // A PRIMEIRA é a de hoje: cada plugin numa pasta própria, então o
-        // Permission mora em Plugins\Permission\. As duas seguintes são
-        // instalações de fases anteriores — DLL solta em Plugins\, e antes
-        // disso a pasta sem hífen. Tentar as três custa dois LoadLibrary que
-        // falham; não tentar custaria um servidor onde o VIP simplesmente não
-        // funciona, sem erro nenhum para investigar.
-        //
-        // Estas são as ÚNICAS menções legítimas às pastas antigas em todo
-        // plugins/: é busca por compatibilidade, não instrução de instalação.
-        // Por isso levam o selo abaixo, que plugins/conferir-caminhos.sh usa
-        // para não as confundir com o defeito real (arquivos mandando o dono
-        // INSTALAR na pasta errada, e o plugin nunca carregando, calado).
+        // These are the ONLY legitimate mentions of the old folders anywhere in
+        // plugins/: this is a compatibility search, not an installation
+        // instruction. That's why they carry the marker below, which
+        // plugins/conferir-caminhos.sh uses so it won't confuse them with the
+        // real defect (files telling an owner to INSTALL into the wrong folder,
+        // and the plugin never loading, silently).
         static const char* const pastas[] = { "\\Conan-Api\\Plugins\\Permission\\",
                                               "\\Conan-Api\\Plugins\\",          /* PASTA-ANTIGA-DE-PROPOSITO */
                                               "\\ConanApi\\Plugins\\" };         /* PASTA-ANTIGA-DE-PROPOSITO */
@@ -327,10 +316,10 @@ CONAN_PERM_TALVEZ static const ConanPermApi* ConanPermObter(void)
                              GetProcAddress(m, CONAN_PERM_FABRICA);
         const ConanPermApi* a = f ? f(CONAN_PERM_ABI) : 0;
 
-        // Conferir o que voltou antes de confiar. Um Permission com ABI
-        // diferente, ou com struct menor que o cabeçalho, é tratado como
-        // ausente — melhor cego e sabendo do que chamando ponteiro que não
-        // existe. `tamanho` menor que os 4 uint32 do cabeçalho é lixo.
+        // Check what came back before trusting it. A Permission with a
+        // different ABI, or with a struct smaller than the header, is treated as
+        // absent. Better blind and aware than calling a pointer that isn't
+        // there. A `tamanho` smaller than the header's four uint32s is junk.
         if (!a || a->abi != CONAN_PERM_ABI || a->tamanho < 16) return 0;
         g_api = a;
     }
@@ -344,18 +333,18 @@ CONAN_PERM_TALVEZ static int ConanPermDisponivel(void) { return ConanPermObter()
 CONAN_PERM_TALVEZ static uint32_t ConanPermVersao(void)
 { const ConanPermApi* a = ConanPermObter(); return a ? a->versao : 0u; }
 
-// O Permission instalado é novo o bastante para ter o campo em `offset_do_fim`?
-// Use com offsetof() + sizeof() do campo que você quer chamar. Existe para o
-// dia em que a tabela crescer: plugin novo contra Permission velho.
+// Is the installed Permission new enough to have the field at that offset?
+// Use with offsetof() + sizeof() of the field you want to call. It exists for
+// the day the table grows: a new plugin against an old Permission.
 CONAN_PERM_TALVEZ static int ConanPermTemCampo(uint32_t bytesNecessarios)
 { const ConanPermApi* a = ConanPermObter(); return a && a->tamanho >= bytesNecessarios; }
 
-// ── conveniências ───────────────────────────────────────────────────────────
+// ── convenience wrappers ────────────────────────────────────────────────────
 //
-// Todas exigem `se_ausente` explícito. Não há sobrecarga sem esse argumento de
-// propósito: o autor do plugin TEM de decidir o que acontece quando o
-// Permission não está instalado, e a decisão fica escrita na chamada, visível
-// em code review, em vez de escondida num padrão.
+// All of them require an explicit `se_ausente` (if_absent). There's no overload
+// without that argument, on purpose: the plugin author HAS to decide what
+// happens when Permission isn't installed, and the decision ends up written at
+// the call site, visible in code review, instead of hidden in a default.
 CONAN_PERM_TALVEZ static int32_t ConanPermTem(const char* jogador, const char* no, int32_t se_ausente)
 {
     const ConanPermApi* a = ConanPermObter();
@@ -391,7 +380,7 @@ CONAN_PERM_TALVEZ static int32_t ConanPermGrupos(const char* jogador, char* said
     return a->grupos(jogador, saida, tam);
 }
 
-// O atalho que a maioria dos plugins vai usar: do objeto do jogo para o id.
+// The shortcut most plugins will use: from the game object straight to the id.
 CONAN_PERM_TALVEZ static int32_t ConanPermIdDoController(void* objetoDoJogo, char* saida, int32_t tam)
 {
     const ConanPermApi* a = ConanPermObter();
