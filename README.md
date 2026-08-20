@@ -547,22 +547,21 @@ compilador para nada, e quem escreve plugin não precisa dos binários do servid
 
 ---
 
-## Licença, em três linhas
+## Licença: MIT
 
-**O que você escreve é seu, e você pode vender.** Plugin feito com esta API tem
-a licença que você quiser, sem pedir autorização, sem pagar nada, sem dividir
-nada. Servidor que cobra dos jogadores também pode usar.
+**Este SDK é MIT.** Headers, `ConanSDK.h`, exemplos, Permission — tudo. Compile,
+altere, publique, **venda**. Sem autorização a pedir, sem pagar nada, sem dividir
+nada. O plugin é seu e a licença dele é escolha sua.
 
-**A API em si não se revende.** Ela não pode ser vendida, licenciada, alugada,
-nem incluída em pacote comercial. E não se re-hospeda: nada de espelhar o
-download ou embutir os arquivos em outro instalador.
+**O loader é outra história.** O [Conan-Api](../../../Conan-Api) — carregador,
+motor e binários que rodam no servidor — está sob licença própria: não pode ser
+revendido, re-hospedado nem incluído em pacote comercial.
 
-**O link é livre.** Divulgue e indexe o link deste repositório onde quiser —
-site, fórum, vídeo, marketplace. Quem quiser a API pega aqui.
+Isso não te afeta escrevendo plugins. **Nenhuma linha do motor entra no seu
+binário** — você fala com uma tabela de ponteiros de função, e é exatamente por
+isso que o header pode ser MIT sem contaminar nada seu.
 
-O texto completo está no [LICENSE](LICENSE), e ele explica o porquê: a API é a
-fundação, e existe **uma** para que haja um caminho de atualização quando o jogo
-muda, em vez de cinco cópias divergentes que ninguém acompanha.
+Detalhes em [NOTICE.md](NOTICE.md).
 
 ---
 
