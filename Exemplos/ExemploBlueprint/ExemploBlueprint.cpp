@@ -1,66 +1,68 @@
 // ============================================================================
-//  ExemploBlueprint — intercepta TODA execução de função de Blueprint
+//  ExemploBlueprint — intercepts EVERY Blueprint function execution
 //
-//  Fecha o buraco que o hook de ProcessEvent deixava: chamada
-//  Blueprint→Blueprint dentro do mesmo grafo vai por `UObject::CallFunction` e
-//  escapa do funil de eventos.
+//  It closes the gap the ProcessEvent hook left behind: a Blueprint-to-
+//  Blueprint call inside the same graph goes through `UObject::CallFunction`
+//  and escapes the event funnel.
 //
-//  A saída não foi achar `CallFunction` — foi achar onde os dois caminhos se
-//  ENCONTRAM. `UObject::ProcessInternal` é o interpretador de bytecode, e toda
-//  função de Blueprint passa por ele, venha de onde vier.
+//  The way out wasn't finding `CallFunction` — it was finding where the two
+//  paths MEET. `UObject::ProcessInternal` is the bytecode interpreter, and
+//  every Blueprint function goes through it, wherever it came from.
 //
-//  O CUSTO, MEDIDO — e nem o palpite nem a primeira correção acertaram
+//  THE COST, MEASURED — and neither the guess nor the first correction got it
 //
-//  Escrevi que dispararia "muito mais que um hook de evento": palpite. Medi os
-//  primeiros 30 s e "corrigi" para o contrário (4 contra 1.537): também errado,
-//  porque o servidor ainda estava subindo. A série real:
+//  I wrote that it would fire "far more than an event hook": a guess. I
+//  measured the first 30 s and "corrected" it to the opposite (4 against
+//  1,537): also wrong, because the server was still coming up. The real
+//  series:
 //
-//      boot        4 · 46 · 10.787 por 30 s      <- povoando o mundo
-//      regime      ~190.000 por 30 s             <- ~6.300 execuções/s
-//      amostra     15.401.413 execuções em 47 min
-//      proporção   0,43 execução de Blueprint por evento (47 min de amostra)
+//      boot        4 · 46 · 10,787 per 30 s     <- populating the world
+//      steady      ~190,000 per 30 s            <- ~6,300 executions/s
+//      sample      15,401,413 executions in 47 min
+//      ratio       0.43 Blueprint executions per event (47 min sample)
 //
-//  MESMA ORDEM DE GRANDEZA que o funil, cerca de metade. O primeiro número que
-//  sai de uma medição não é o número — esperar o regime é parte de medir.
+//  SAME ORDER OF MAGNITUDE as the funnel, roughly half of it. The first number
+//  a measurement gives you isn't the number — waiting for steady state is part
+//  of measuring.
 //
-//  Mesmo assim são 6.300 chamadas por segundo passando pelo callback. Aqui ele
-//  faz o mínimo: incrementa um contador relaxed e repassa. Se o seu fizer mais
-//  que isso, meça o efeito no frame time antes de deixar ligado.
+//  Even so, that's 6,300 calls a second going through the callback. Here it
+//  does the minimum: bumps a relaxed counter and passes the call on. If yours
+//  does more, measure the effect on frame time before leaving it enabled.
 //
 //  ─────────────────────────────────────────────────────────────────────────
-//  MODELO DE TABELA: nada nosso entra neste binário
+//  TABLE MODEL: nothing of ours enters this binary
 //  ─────────────────────────────────────────────────────────────────────────
-//  Só `ConanPluginApi.h` — declarações, sem implementação. Nenhuma biblioteca
-//  para linkar. Isso importa AQUI mais do que em qualquer outro exemplo: o
-//  detour deste plugin fica no caminho mais quente do jogo, e no modelo antigo
-//  ele carregava uma cópia do nosso motor dentro dele. Agora o que roda 6.300
-//  vezes por segundo é só o que está neste arquivo.
+//  Only `ConanPluginApi.h` — declarations, no implementation. No library to
+//  link. That matters HERE more than in any other example: this plugin's detour
+//  sits on the game's hottest path, and under the old model it carried a copy
+//  of our runtime inside it. Now what runs 6,300 times a second is only what's
+//  in this file.
 // ============================================================================
 #include "Conan/ConanPluginApi.h"
 #include <windows.h>
 #include <atomic>
 
-// A tabela chega em ConanPluginCarregar e vale por toda a vida do processo.
-// Guardamos o ponteiro; ele não é copiado, é da API.
+// The table arrives in ConanPluginCarregar and stays valid for the life of the
+// process. We keep the pointer; it isn't copied, it belongs to the API.
 static const ConanApiTabela* g_api = nullptr;
 
 static std::atomic<uint64_t> g_execs{0};
 using FnInterno = void (*)(void*, void*, void*);
 static FnInterno g_original = nullptr;
 
-// O detour tem de ser barato: este é o caminho mais quente de todo o jogo.
-// Nada de `g_api->` aqui dentro — chamada indireta pela tabela 6.300 vezes por
-// segundo é custo que não precisa existir. O contador é local ao plugin.
+// The detour has to be cheap: this is the hottest path in the whole game. No
+// `g_api->` in here — an indirect call through the table 6,300 times a second
+// is a cost that doesn't need to exist. The counter is local to the plugin.
 extern "C" void MeuDetour(void* a, void* b, void* c)
 {
     g_execs.fetch_add(1, std::memory_order_relaxed);
-    // Sem chamar o original, o servidor para de executar Blueprint — ou seja,
-    // para de funcionar. O header diz isso, e é literal.
+    // Without calling the original, the server stops executing Blueprint — in
+    // other words, stops working. The header says so, and it means it.
     if (g_original) g_original(a, b, c);
 }
 
-// Roda na thread do jogo, agendada pela API. É o único lugar que fala com a
-// tabela em regime.
+// Runs on the game's thread, scheduled by the API. It's the only place that
+// talks to the table in steady state.
 static void Relatar(void*)
 {
     static uint64_t antes = 0;
@@ -70,7 +72,7 @@ static void Relatar(void*)
     g_api->Log("[bp] execucoes de Blueprint: %llu (+%llu em 30s) | funil de eventos: %llu",
                (unsigned long long)agora, (unsigned long long)(agora - antes),
                (unsigned long long)funil);
-    // A proporção em execuções-por-evento é a que compara com o funil.
+    // The executions-per-event ratio is what compares against the funnel.
     if (funil > 0)
         g_api->Log("[bp]    %.2f execucoes de Blueprint por evento (regime medido: ~0,43)",
                    double(agora) / double(funil));
@@ -80,10 +82,11 @@ static void Relatar(void*)
 extern "C" __declspec(dllexport)
 void ConanPluginCarregar(const ConanApiTabela* api)
 {
-    // Sem isto, um plugin compilado contra uma tabela MAIOR rodando numa API
-    // mais velha leria ponteiro além do fim da struct e chamaria lixo. Aqui o
-    // dano seria pior que em outro plugin: quem chama lixo é o detour do
-    // caminho quente, e o servidor cai no primeiro Blueprint que executar.
+    // Without this, a plugin compiled against a BIGGER table running on an
+    // older API would read a pointer past the end of the struct and call junk.
+    // The damage here would be worse than in any other plugin: what calls the
+    // junk is the hot-path detour, and the server goes down on the first
+    // Blueprint it executes.
     if (!api || api->tamanho < sizeof(ConanApiTabela)) return;
     g_api = api;
 
@@ -91,29 +94,30 @@ void ConanPluginCarregar(const ConanApiTabela* api)
     g_api->Log("=== ExemploBlueprint ===");
     if (!g_api->Pronta()) { g_api->Log("  reflexao indisponivel"); return; }
 
-    // ── PASSAR A PRÓPRIA GLOBAL, E NÃO UMA VARIÁVEL LOCAL ───────────────────
+    // ── PASS THE GLOBAL ITSELF, NOT A LOCAL VARIABLE ────────────────────────
     //
-    // A versão anterior fazia assim, e está ERRADO:
+    // The previous version did this, and it's WRONG:
     //
     //     void* orig = nullptr;
-    //     HookExecucaoDeBlueprint(&MeuDetour, &orig);   // patch já ativo aqui
-    //     g_original = orig;                            // só agora o detour vê
+    //     HookExecucaoDeBlueprint(&MeuDetour, &orig);   // patch already live
+    //     g_original = orig;                            // only now does the
+    //                                                   // detour see it
     //
-    // O motor preenche o ponteiro ANTES de escrever os 5 bytes do patch (ver
-    // ConanHooks.cpp: `*original = tramp;` vem antes de EscreverAtomico5) — ou
-    // seja, ele faz a parte dele certo. Mas quem preenchia a GLOBAL que o detour
-    // lê era a linha seguinte do plugin, DEPOIS de a função voltar. Entre o
-    // patch e essa linha existe uma janela em que MeuDetour roda com
-    // g_original == nullptr, e o `if (g_original)` abaixo — que é a atitude
-    // certa — descarta a chamada em SILÊNCIO. Cada execução de Blueprint
-    // descartada é código do jogo que simplesmente não rodou.
+    // The runtime fills the pointer in BEFORE writing the patch's 5 bytes (see
+    // ConanHooks.cpp: `*original = tramp;` comes before EscreverAtomico5) — so
+    // it does its part right. But what filled the GLOBAL the detour reads was
+    // the plugin's next line, AFTER the function returned. Between the patch
+    // and that line there's a window where MeuDetour runs with
+    // g_original == nullptr, and the `if (g_original)` below — which is the
+    // right instinct — drops the call SILENTLY. Every dropped Blueprint
+    // execution is game code that simply didn't run.
     //
-    // Passando o endereço da própria global, o motor escreve nela antes do
-    // patch existir. A janela deixa de ter onde acontecer.
+    // Passing the address of the global itself, the runtime writes into it
+    // before the patch exists. The window has nowhere left to happen.
     //
-    // ISTO IMPORTA MAIS AQUI DO QUE EM QUALQUER OUTRO EXEMPLO: este arquivo é o
-    // que o dev copia quando vai hookar alguma coisa. O padrão errado se
-    // multiplicaria por toda plugin da comunidade.
+    // THIS MATTERS MORE HERE THAN IN ANY OTHER EXAMPLE: this file is what a
+    // developer copies when they go to hook something. The wrong pattern would
+    // multiply across every plugin in the community.
     const ConanRecusa r = g_api->HookExecucaoDeBlueprint(
         reinterpret_cast<void*>(&MeuDetour),
         reinterpret_cast<void**>(&g_original));

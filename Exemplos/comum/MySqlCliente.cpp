@@ -1,53 +1,54 @@
 // ============================================================================
-//  MySqlCliente.cpp — o protocolo MySQL, byte a byte, sem biblioteca nenhuma
+//  MySqlCliente.cpp — the MySQL protocol, byte by byte, with no library
 //
-//  COMO LER ESTE ARQUIVO
+//  HOW TO READ THIS FILE
 //  ---------------------
-//    §1  utilidades: mensagem de erro, leitura com limite, número variável
-//    §2  criptografia: SHA-1, SHA-256, aleatório do sistema
-//    §3  RSA: número grande, PEM/DER, OAEP  (só o MySQL 8 precisa disto)
-//    §4  socket com prazo (Winsock ou BSD)
-//    §5  camada de pacote (cabeçalho de 4 bytes, número de sequência)
-//    §6  handshake e autenticação
-//    §7  comandos e leitura de resultado
-//    §8  escape e aspas
-//    §9  a classe pública
+//    §1  utilities: error message, bounded reads, variable-length integer
+//    §2  crypto: SHA-1, SHA-256, system randomness
+//    §3  RSA: big numbers, PEM/DER, OAEP  (only MySQL 8 needs this)
+//    §4  socket with a deadline (Winsock or BSD)
+//    §5  packet layer (4-byte header, sequence number)
+//    §6  handshake and authentication
+//    §7  commands and reading the result
+//    §8  escaping and quoting
+//    §9  the public class
 //
-//  COMO LINKAR
+//  HOW TO LINK
 //  -----------
 //    Windows:  x86_64-w64-mingw32-g++ ... MySqlCliente.cpp -lws2_32
-//    Linux:    g++ ... MySqlCliente.cpp        (nada a linkar)
-//  Esquecer o -lws2_32 dá erro de link, não erro silencioso — é o tipo bom.
+//    Linux:    g++ ... MySqlCliente.cpp        (nothing to link)
+//  Forgetting -lws2_32 gives a link error, not a silent one — the good kind.
 //
-//  RISCO RESIDUAL, DECLARADO E NÃO RESOLVIDO AQUI
-//  ----------------------------------------------
-//  1) SEM TLS. A senha nunca vai em claro no fio (native = SHA-1 com sal;
-//     caching_sha2 = SHA-256 com sal, ou RSA quando o servidor exige), mas as
-//     CONSULTAS e as RESPOSTAS trafegam abertas. Quem consegue farejar a rede
-//     entre o servidor de jogo e o MySQL lê e altera SQL. Para MySQL na mesma
-//     máquina ou na mesma rede privada isso é aceitável; para MySQL na
-//     internet, não é. Não está implementado e não é honesto dizer que está.
+//  RESIDUAL RISK, DECLARED AND NOT SOLVED HERE
+//  -------------------------------------------
+//  1) NO TLS. The password never crosses the wire in the clear (native =
+//     SHA-1 with salt; caching_sha2 = SHA-256 with salt, or RSA when the
+//     server demands it), but the QUERIES and the ANSWERS travel in the
+//     open. Anyone who can sniff the network between the game server and
+//     MySQL reads and rewrites SQL. For MySQL on the same machine or the
+//     same private network that's acceptable; for MySQL on the internet it
+//     isn't. It isn't implemented, and saying it is wouldn't be honest.
 //
-//  2) A chave RSA vem do PRÓPRIO servidor, pelo fio aberto (é o que o
-//     protocolo caching_sha2_password oferece quando não há TLS). Quem
-//     consegue se pôr no meio troca a chave pela dele e captura a senha. O
-//     cliente oficial tem a mesma exposição quando roda com
-//     --get-server-public-key; a alternativa (--server-public-key-path) exige
-//     que o dono copie um arquivo .pem à mão, e a premissa deste projeto é
-//     que ele não vai fazer isso. Fica escrito.
+//  2) The RSA key comes from the SERVER ITSELF, over the open wire (that's
+//     what the caching_sha2_password protocol offers when there's no TLS).
+//     Anyone who can get in the middle swaps in their own key and captures
+//     the password. The official client has the same exposure when it runs
+//     with --get-server-public-key; the alternative
+//     (--server-public-key-path) makes the owner copy a .pem file by hand,
+//     and this project assumes he won't do that. Writing it down.
 //
-//  3) Sem prepared statements. A defesa contra injeção é Citar()/Escapar()
-//     mais três coisas que este arquivo garante: utf8mb4 forçado,
-//     NO_BACKSLASH_ESCAPES recusado, e CLIENT_MULTI_STATEMENTS desligado.
+//  3) No prepared statements. The defense against injection is
+//     Citar()/Escapar() plus three things this file guarantees: utf8mb4
+//     forced, NO_BACKSLASH_ESCAPES refused, CLIENT_MULTI_STATEMENTS off.
 //
-//  FONTE DO PROTOCOLO
-//  ------------------
-//  Documentação pública do MySQL ("Client/Server Protocol", capítulo do
-//  MySQL Internals) e o comportamento observado nos dois servidores de teste
-//  desta máquina: MySQL 8.4.11 e MariaDB 10.11. Cada campo lido está anotado
-//  com o tamanho e a ordem de bytes — nada aqui faz cast de struct em cima do
-//  buffer da rede, justamente para não depender de alinhamento nem de
-//  endianness da máquina que compila (exigência 5 da tarefa).
+//  PROTOCOL SOURCE
+//  ---------------
+//  Public MySQL documentation ("Client/Server Protocol", a chapter of MySQL
+//  Internals) plus the behavior observed on the two test servers on this
+//  machine: MySQL 8.4.11 and MariaDB 10.11. Every field read is annotated
+//  with its size and byte order. Nothing here casts a struct over the
+//  network buffer, precisely so it doesn't depend on the alignment or the
+//  endianness of the machine doing the compiling (task requirement 5).
 // ============================================================================
 
 #include "MySqlCliente.h"
@@ -100,16 +101,16 @@ namespace
 {
 
 // ============================================================================
-//  §1 · UTILIDADES
+//  §1 · UTILITIES
 // ============================================================================
 
-// Número grande em texto.
+// Big number as text.
 //
-// POR QUE NÃO "%llu": o mingw-w64 pode ligar o printf do msvcrt, onde o
-// modificador `ll` nem sempre existe; o resultado é um "%llu" impresso
-// literalmente ou lixo — numa MENSAGEM DE ERRO, que é justamente a hora em
-// que o dono do servidor mais precisa de um número legível. Com %s e esta
-// função o texto é o mesmo em toda plataforma.
+// WHY NOT "%llu": mingw-w64 can wire printf to the msvcrt one, where the `ll`
+// modifier doesn't always exist; what comes out is a literal "%llu" or
+// garbage, inside an ERROR MESSAGE — exactly when the server owner most needs
+// a readable number. With %s and this function the text is the same on every
+// platform.
 std::string Dec(uint64_t v)
 {
     char b[24];
@@ -120,9 +121,10 @@ std::string Dec(uint64_t v)
     return std::string(b + i);
 }
 
-// Escreve a mensagem no buffer do chamador. 'erro' pode ser nulo — é o caso
-// comum de quem só quer saber se deu certo — e nesse caso não faz nada.
-// Sempre termina em '\0'; se não couber, trunca (nunca estoura).
+// Writes the message into the caller's buffer. 'erro' can be null (the common
+// case for someone who only wants to know whether it worked), and then this
+// does nothing. Always ends in '\0'; if it doesn't fit, it truncates (it
+// never overruns).
 void Diga(char* erro, int tamErro, const char* fmt, ...)
 {
     if (!erro || tamErro <= 0) return;
@@ -130,19 +132,19 @@ void Diga(char* erro, int tamErro, const char* fmt, ...)
     va_start(ap, fmt);
     int n = vsnprintf(erro, (size_t)tamErro, fmt, ap);
     va_end(ap);
-    if (n < 0) erro[0] = '\0';           // vsnprintf falhou: não deixa lixo
+    if (n < 0) erro[0] = '\0';           // vsnprintf failed: leave no garbage
     erro[tamErro - 1] = '\0';
 }
 
-// ── inteiros do protocolo ────────────────────────────────────────────────
+// ── protocol integers ────────────────────────────────────────────────────
 //
-// EXIGÊNCIA 5 DA TAREFA, e o motivo dela: o protocolo do MySQL é
-// little-endian SEMPRE, independente da máquina. Ler com
-// `*(uint32_t*)p` daria certo em x86 e daria errado em qualquer máquina
-// big-endian — e daria errado também em x86 se o ponteiro estivesse
-// desalinhado numa build com -fsanitize=alignment. As funções abaixo montam
-// o número a partir dos bytes, na ordem que o protocolo manda, e por isso não
-// dependem nem da endianness nem do alinhamento da máquina que compila.
+// TASK REQUIREMENT 5, and the reason for it: the MySQL protocol is ALWAYS
+// little-endian, whatever the machine. Reading with `*(uint32_t*)p` would
+// work on x86 and break on any big-endian machine, and it would break on x86
+// too if the pointer were misaligned in a build with -fsanitize=alignment.
+// The functions below assemble the number from the bytes, in the order the
+// protocol dictates, so they depend on neither the endianness nor the
+// alignment of the machine doing the compiling.
 inline uint16_t Le16(const uint8_t* p)
 {
     return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
@@ -164,16 +166,16 @@ inline void PorLe32(std::vector<uint8_t>& v, uint32_t x)
     v.push_back((uint8_t)((x >> 24) & 0xFF));
 }
 
-// ── cursor com limite ────────────────────────────────────────────────────
+// ── bounded cursor ───────────────────────────────────────────────────────
 //
-// TODA leitura de payload passa por aqui. O payload vem da rede: pode estar
-// truncado por acidente (conexão caiu no meio) ou por maldade (servidor
-// forjado dizendo "tenho 40 colunas" num pacote de 3 bytes).
+// EVERY payload read goes through here. The payload comes off the network: it
+// can be truncated by accident (connection dropped mid-way) or on purpose (a
+// forged server claiming "I have 40 columns" in a 3-byte packet).
 //
-// A regra é uma só: nenhuma função deste arquivo indexa o buffer da rede
-// direto. Quem quer bytes pede ao cursor, e o cursor devolve false quando não
-// tem. Um `false` ignorado não vira leitura fora do buffer porque o ponteiro
-// devolvido continua nulo e o chamador confere.
+// There's one rule: no function in this file indexes the network buffer
+// directly. Whoever wants bytes asks the cursor, and the cursor returns false
+// when it hasn't got them. An ignored `false` doesn't turn into a read past
+// the buffer because the returned pointer stays null and the caller checks.
 class Cursor
 {
 public:
@@ -213,13 +215,13 @@ public:
     }
     void Pular(size_t n) { Bytes(n, nullptr); }
 
-    // Inteiro de tamanho variável ("length-encoded integer"):
-    //   0x00..0xFA  o próprio byte é o valor
-    //   0xFB        NULL (só faz sentido dentro de linha de resultado)
-    //   0xFC        seguem 2 bytes little-endian
-    //   0xFD        seguem 3 bytes little-endian
-    //   0xFE        seguem 8 bytes little-endian
-    //   0xFF        nunca aparece aqui — é o primeiro byte de um pacote ERR
+    // Variable-length integer ("length-encoded integer"):
+    //   0x00..0xFA  the byte itself is the value
+    //   0xFB        NULL (only makes sense inside a result row)
+    //   0xFC        2 little-endian bytes follow
+    //   0xFD        3 little-endian bytes follow
+    //   0xFE        8 little-endian bytes follow
+    //   0xFF        never shows up here — it's the first byte of an ERR packet
     bool VarInt(uint64_t& v, bool& nulo)
     {
         nulo = false;
@@ -229,15 +231,15 @@ public:
         if (b == 0xFB) { nulo = true; v = 0; return true; }
         const uint8_t* p = nullptr;
         size_t n = (b == 0xFC) ? 2 : (b == 0xFD) ? 3 : (b == 0xFE) ? 8 : 0;
-        if (n == 0) { m_ok = false; return false; }   // 0xFF: fluxo inválido
+        if (n == 0) { m_ok = false; return false; }   // 0xFF: invalid stream
         if (!Bytes(n, &p)) return false;
         v = 0;
         for (size_t i = 0; i < n; ++i)
-            v |= (uint64_t)p[i] << (8 * i);           // little-endian, sempre
+            v |= (uint64_t)p[i] << (8 * i);           // little-endian, always
         return true;
     }
 
-    // String precedida do comprimento variável. NULL vira nulo=true.
+    // String preceded by its variable-length size. NULL sets nulo=true.
     bool VarStr(const uint8_t** p, size_t& n, bool& nulo)
     {
         uint64_t len = 0;
@@ -248,9 +250,9 @@ public:
         return Bytes(n, p);
     }
 
-    // String terminada em '\0'. Se não houver '\0' até o fim do payload, o
-    // pacote está malformado — e aí a leitura FALHA, em vez de sair do buffer
-    // procurando um zero que não existe.
+    // String terminated by '\0'. If there's no '\0' before the end of the
+    // payload the packet is malformed, and then the read FAILS instead of
+    // walking off the buffer looking for a zero that isn't there.
     bool StrNul(std::string& saida)
     {
         if (!m_ok) return false;
@@ -262,7 +264,7 @@ public:
         return true;
     }
 
-    // O que sobrou, cru.
+    // Whatever is left, raw.
     void Resto(const uint8_t** p, size_t& n)
     {
         *p = m_p + m_i;
@@ -278,15 +280,15 @@ private:
 };
 
 // ============================================================================
-//  §2 · CRIPTOGRAFIA MÍNIMA
+//  §2 · MINIMAL CRYPTO
 //
-//  SHA-1 e SHA-256 estão aqui porque a autenticação do MySQL usa os dois e
-//  não há OpenSSL neste toolchain. São implementações diretas da FIPS 180-4,
-//  sem otimização — rodam uma vez por conexão, não estão em caminho quente.
-//  A prova de que estão certas está no teste (testes/teste_mysql.cpp): os
-//  vetores conhecidos de "abc" e da string vazia, e — mais importante — o
-//  fato de a autenticação REAL passar contra dois servidores diferentes. Um
-//  SHA errado não autentica em lugar nenhum.
+//  SHA-1 and SHA-256 are here because MySQL authentication uses both and
+//  there's no OpenSSL in this toolchain. They're straight implementations of
+//  FIPS 180-4, unoptimized: they run once per connection, they're not on a
+//  hot path. The proof they're right is in the test (testes/teste_mysql.cpp):
+//  the known vectors for "abc" and for the empty string and, more important,
+//  the fact that REAL authentication passes against two different servers. A
+//  wrong SHA doesn't authenticate anywhere.
 // ============================================================================
 
 struct Sha1
@@ -307,8 +309,8 @@ struct Sha1
     void Bloco(const uint8_t* p)
     {
         uint32_t w[80];
-        // big-endian: o SHA-1 é definido em big-endian, ao contrário do
-        // protocolo do MySQL. Montado byte a byte pelo mesmo motivo de sempre.
+        // big-endian: SHA-1 is defined big-endian, unlike the MySQL protocol.
+        // Assembled byte by byte for the usual reason.
         for (int i = 0; i < 16; ++i)
             w[i] = ((uint32_t)p[i*4] << 24) | ((uint32_t)p[i*4+1] << 16)
                  | ((uint32_t)p[i*4+2] << 8) | (uint32_t)p[i*4+3];
@@ -345,7 +347,7 @@ struct Sha1
         uint8_t fim = 0x80;
         uint64_t bits = total;
         Adicionar(&fim, 1);
-        total = bits;                      // Adicionar somou o 0x80; desfaz
+        total = bits;                      // Adicionar counted the 0x80; undo
         static const uint8_t zero[64] = {0};
         while (n != 56) { Adicionar(zero, 1); total = bits; }
         uint8_t tam[8];
@@ -465,51 +467,51 @@ void Sha256De2(const uint8_t* a, size_t na, const uint8_t* b, size_t nb, uint8_t
     Sha256 s; s.Iniciar(); s.Adicionar(a, na); s.Adicionar(b, nb); s.Fechar(saida);
 }
 
-// Apaga segredo da memória sem que o compilador otimize o memset embora.
-// -O2 remove memset em buffer que "não é mais lido"; o ponteiro volátil
-// impede isso. Não é paranoia gratuita: o buffer da senha e o do escrambleo
-// ficam no stack de uma thread que continua viva depois.
+// Wipes a secret from memory without the compiler optimizing the memset away.
+// -O2 drops a memset on a buffer that "isn't read any more"; the volatile
+// pointer stops that. It isn't free paranoia: the password buffer and the
+// scramble buffer sit on the stack of a thread that stays alive afterwards.
 void Limpar(void* p, size_t n)
 {
     volatile uint8_t* v = (volatile uint8_t*)p;
     while (n--) *v++ = 0;
 }
 
-// ── aleatoriedade do sistema ─────────────────────────────────────────────
+// ── system randomness ────────────────────────────────────────────────────
 //
-// Serve a UMA coisa: a semente do preenchimento OAEP que cifra a senha na
-// autenticação do MySQL 8. Semente previsível enfraquece o OAEP e permite a
-// quem gravou o tráfego testar palpites de senha fora do ar.
+// This serves ONE thing: the seed of the OAEP padding that encrypts the
+// password in MySQL 8 authentication. A predictable seed weakens OAEP and
+// lets whoever recorded the traffic test password guesses offline.
 //
-// Por isso: ou vem do gerador do sistema operacional, ou NÃO VAI. Não existe
-// caminho "usa relógio e endereço de memória se não achar nada" — isso seria
-// devolver criptografia de fachada com cara de criptografia.
-// 'fonte' (opcional) recebe o nome do gerador que respondeu. Serve para o
-// diagnostico na maquina do dono do servidor: se um dia a cifragem falhar, a
-// primeira pergunta e' "qual gerador o Windows dele tem", e adivinhar isso a
-// distancia custa uma tarde.
+// So: either it comes from the operating system's generator, or it DOESN'T
+// GO. There's no "use the clock and a memory address if nothing turns up"
+// path — that would be handing back fake crypto dressed up as crypto.
+// 'fonte' (optional) gets the name of the generator that answered. It's for
+// diagnosis on the server owner's machine: if encryption ever fails, the
+// first question is "which generator does his Windows have", and guessing
+// that from a distance costs an afternoon.
 bool AleatorioDoSistema(uint8_t* p, size_t n, const char** fonte = nullptr)
 {
     if (fonte) *fonte = "(nenhum)";
     if (n == 0) return true;
 #ifdef _WIN32
-    // Carregado em tempo de execução para NÃO acrescentar dependência de link
-    // (nem -lbcrypt nem -ladvapi32). Se a DLL não existir, cai para a próxima.
+    // Loaded at run time so it does NOT add a link dependency (neither
+    // -lbcrypt nor -ladvapi32). If the DLL isn't there, fall to the next one.
     {
         typedef long (WINAPI *FnGen)(void*, unsigned char*, unsigned long, unsigned long);
         HMODULE m = LoadLibraryA("bcrypt.dll");
         if (m)
         {
             FnGen f = (FnGen)(void*)GetProcAddress(m, "BCryptGenRandom");
-            // 0x00000002 = BCRYPT_USE_SYSTEM_PREFERRED_RNG (dispensa handle)
+            // 0x00000002 = BCRYPT_USE_SYSTEM_PREFERRED_RNG (no handle needed)
             if (f && f(nullptr, p, (unsigned long)n, 0x00000002u) == 0)
             { FreeLibrary(m); if (fonte) *fonte = "BCryptGenRandom"; return true; }
             FreeLibrary(m);
         }
     }
     {
-        // RtlGenRandom: existe desde o Windows XP, e é o que o próprio
-        // Windows usa por baixo. O nome exportado é SystemFunction036.
+        // RtlGenRandom: around since Windows XP, and it's what Windows
+        // itself uses underneath. The exported name is SystemFunction036.
         typedef unsigned char (WINAPI *FnRtl)(void*, unsigned long);
         HMODULE m = LoadLibraryA("advapi32.dll");
         if (m)
@@ -532,20 +534,21 @@ bool AleatorioDoSistema(uint8_t* p, size_t n, const char** fonte = nullptr)
 }
 
 // ============================================================================
-//  §3 · RSA — só para o caching_sha2_password do MySQL 8
+//  §3 · RSA — only for MySQL 8's caching_sha2_password
 //
-//  Números grandes em base 2^32, vetor little-endian (limbo 0 = menos
-//  significativo). A redução é bit a bit: ~50 ms para uma exponenciação de
-//  2048 bits com expoente 65537 (medido; ver saída do teste). É lento e é
-//  óbvio — nesta ordem de importância, porque roda UMA vez por conexão e o
-//  custo de um erro sutil aqui é uma autenticação que falha sem explicação.
+//  Big numbers in base 2^32, little-endian vector (limb 0 = least
+//  significant). Reduction is bit by bit: ~50 ms for a 2048-bit
+//  exponentiation with exponent 65537 (measured; see the test output). It's
+//  slow and it's obvious, in that order of importance, because it runs ONCE
+//  per connection and the cost of a subtle bug here is an authentication
+//  that fails with no explanation.
 // ============================================================================
 
 typedef std::vector<uint32_t> Num;
 
 void NumEnxugar(Num& a) { while (a.size() > 1 && a.back() == 0) a.pop_back(); }
 
-Num NumDeBytes(const uint8_t* p, size_t n)          // entrada big-endian
+Num NumDeBytes(const uint8_t* p, size_t n)          // big-endian input
 {
     Num a;
     a.push_back(0);
@@ -565,9 +568,9 @@ Num NumDeBytes(const uint8_t* p, size_t n)          // entrada big-endian
     return a;
 }
 
-// Saída big-endian de largura fixa. Devolve false se não couber — nunca
-// trunca em silêncio, porque um RSA truncado "quase funciona" e falha só às
-// vezes, que é o pior modo de falha possível.
+// Fixed-width big-endian output. Returns false if it doesn't fit. It never
+// truncates silently, because a truncated RSA "almost works" and fails only
+// sometimes, which is the worst failure mode there is.
 bool NumParaBytes(const Num& a, uint8_t* saida, size_t n)
 {
     memset(saida, 0, n);
@@ -576,7 +579,7 @@ bool NumParaBytes(const Num& a, uint8_t* saida, size_t n)
         uint32_t v = a[j];
         for (int b = 0; b < 4; ++b)
         {
-            size_t pos = j * 4 + (size_t)b;          // posição em bytes, do fim
+            size_t pos = j * 4 + (size_t)b;          // byte position, from end
             uint8_t byte = (uint8_t)((v >> (8 * b)) & 0xFF);
             if (pos >= n) { if (byte) return false; continue; }
             saida[n - 1 - pos] = byte;
@@ -612,7 +615,7 @@ int NumCmp(const Num& a, const Num& b)
         if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
     return 0;
 }
-void NumSub(Num& a, const Num& b)                    // exige a >= b
+void NumSub(Num& a, const Num& b)                    // requires a >= b
 {
     uint64_t emprestimo = 0;
     for (size_t i = 0; i < a.size(); ++i)
@@ -620,7 +623,7 @@ void NumSub(Num& a, const Num& b)                    // exige a >= b
         uint64_t bi = (i < b.size()) ? b[i] : 0;
         uint64_t t  = (uint64_t)a[i] - bi - emprestimo;
         a[i] = (uint32_t)(t & 0xFFFFFFFFu);
-        emprestimo = (t >> 63) & 1u;                 // pediu emprestado?
+        emprestimo = (t >> 63) & 1u;                 // did it borrow?
     }
     NumEnxugar(a);
 }
@@ -679,7 +682,7 @@ Num NumModExp(const Num& base, const Num& e, const Num& n)
     return r;
 }
 
-// ── base64 e DER ─────────────────────────────────────────────────────────
+// ── base64 and DER ───────────────────────────────────────────────────────
 
 int Base64Valor(char c)
 {
@@ -700,7 +703,7 @@ bool Base64Decodificar(const char* p, size_t n, std::vector<uint8_t>& saida)
         if (c == '\n' || c == '\r' || c == ' ' || c == '\t') continue;
         if (c == '=') break;
         int v = Base64Valor(c);
-        if (v < 0) return false;                       // lixo no meio: recusa
+        if (v < 0) return false;                       // garbage inside: no
         acc = (acc << 6) | (uint32_t)v;
         bits += 6;
         if (bits >= 8)
@@ -712,8 +715,8 @@ bool Base64Decodificar(const char* p, size_t n, std::vector<uint8_t>& saida)
     return !saida.empty();
 }
 
-// Andador de DER: só o suficiente para uma chave pública RSA. Cada leitura é
-// conferida contra o fim do buffer (a chave vem da rede).
+// DER walker: just enough for an RSA public key. Every read is checked
+// against the end of the buffer (the key comes off the network).
 struct Der
 {
     const uint8_t* p; size_t n; size_t i;
@@ -726,7 +729,7 @@ struct Der
         if (len & 0x80)
         {
             size_t nb = len & 0x7F;
-            if (nb == 0 || nb > 4 || i + nb > n) return false;  // indefinido: não
+            if (nb == 0 || nb > 4 || i + nb > n) return false;  // indefinite: no
             len = 0;
             for (size_t k = 0; k < nb; ++k) len = (len << 8) | p[i++];
         }
@@ -738,10 +741,10 @@ struct Der
     }
 };
 
-// Extrai módulo e expoente de uma chave pública RSA em PEM.
-// Aceita os dois formatos que os servidores MySQL/MariaDB emitem:
-//   "BEGIN PUBLIC KEY"      → X.509 SubjectPublicKeyInfo (o que o MySQL manda)
-//   "BEGIN RSA PUBLIC KEY"  → PKCS#1 puro
+// Pulls the modulus and exponent out of an RSA public key in PEM.
+// Accepts the two formats MySQL/MariaDB servers emit:
+//   "BEGIN PUBLIC KEY"      → X.509 SubjectPublicKeyInfo (what MySQL sends)
+//   "BEGIN RSA PUBLIC KEY"  → plain PKCS#1
 bool RsaDoPem(const char* pem, size_t pemN, Num& mod, Num& exp, size_t& kBytes,
               char* erro, int tamErro)
 {
@@ -788,17 +791,17 @@ bool RsaDoPem(const char* pem, size_t pemN, Num& mod, Num& exp, size_t& kBytes,
     if (t1 == 0x30)
     {
         // SubjectPublicKeyInfo: SEQUENCE{ AlgorithmIdentifier, BIT STRING }.
-        // Não conferimos o OID de propósito: se o servidor mandasse uma chave
-        // que não é RSA, a leitura dos dois INTEGER abaixo falharia de
-        // qualquer jeito, e falhar por não achar o número é tão fechado
-        // quanto falhar por não achar o OID.
+        // We skip the OID check on purpose: if the server sent a key that
+        // isn't RSA, reading the two INTEGERs below would fail anyway, and
+        // failing because the number isn't there is just as closed as
+        // failing because the OID isn't there.
         uint8_t t2 = 0; const uint8_t* c2 = nullptr; size_t n2 = 0;
         if (!dentro.Ler(t2, c2, n2) || t2 != 0x03 || n2 < 2)
         {
             Diga(erro, tamErro, "a chave publica do MySQL nao tem o BIT STRING esperado.");
             return false;
         }
-        pkcs1  = c2 + 1;      // primeiro byte do BIT STRING = bits não usados
+        pkcs1  = c2 + 1;      // first byte of the BIT STRING = unused bits
         pkcs1N = n2 - 1;
         Der d2(pkcs1, pkcs1N);
         uint8_t t3 = 0; const uint8_t* c3 = nullptr; size_t n3 = 0;
@@ -811,7 +814,7 @@ bool RsaDoPem(const char* pem, size_t pemN, Num& mod, Num& exp, size_t& kBytes,
     }
     else if (t1 == 0x02)
     {
-        // PKCS#1 direto: o primeiro elemento já é o INTEGER do módulo.
+        // Plain PKCS#1: the first element is already the modulus INTEGER.
         pkcs1  = c;
         pkcs1N = tam;
     }
@@ -829,7 +832,7 @@ bool RsaDoPem(const char* pem, size_t pemN, Num& mod, Num& exp, size_t& kBytes,
         Diga(erro, tamErro, "nao achei o modulo e o expoente dentro da chave publica do MySQL.");
         return false;
     }
-    // INTEGER DER pode vir com um 0x00 na frente para não parecer negativo.
+    // A DER INTEGER can carry a leading 0x00 so it doesn't look negative.
     while (nm > 1 && cm[0] == 0) { ++cm; --nm; }
     while (ne > 1 && ce[0] == 0) { ++ce; --ne; }
 
@@ -837,9 +840,9 @@ bool RsaDoPem(const char* pem, size_t pemN, Num& mod, Num& exp, size_t& kBytes,
     exp = NumDeBytes(ce, ne);
     kBytes = nm;
 
-    // Teto e piso. Chave absurdamente grande vira exponenciação de minutos
-    // (negação de serviço vinda do servidor); chave pequena demais não cifra
-    // senha nenhuma com segurança.
+    // Ceiling and floor. An absurdly large key turns into an exponentiation
+    // that takes minutes (denial of service coming from the server); a key
+    // that's too small doesn't encrypt any password securely.
     if (kBytes < 128 || kBytes > 1024)
     {
         Diga(erro, tamErro, "o MySQL ofereceu uma chave RSA de %d bits, fora da faixa que eu "
@@ -849,8 +852,8 @@ bool RsaDoPem(const char* pem, size_t pemN, Num& mod, Num& exp, size_t& kBytes,
     return true;
 }
 
-// MGF1 com SHA-1, como o RSA_PKCS1_OAEP_PADDING do OpenSSL usa por padrão —
-// que é o que o servidor MySQL espera do outro lado.
+// MGF1 with SHA-1, the way OpenSSL's RSA_PKCS1_OAEP_PADDING uses it by
+// default, which is what the MySQL server expects on the other side.
 void Mgf1(const uint8_t* semente, size_t nSemente, uint8_t* saida, size_t nSaida)
 {
     uint32_t contador = 0;
@@ -869,7 +872,7 @@ void Mgf1(const uint8_t* semente, size_t nSemente, uint8_t* saida, size_t nSaida
     }
 }
 
-// EME-OAEP com SHA-1 (rótulo vazio), RFC 8017 §7.1.1.
+// EME-OAEP with SHA-1 (empty label), RFC 8017 §7.1.1.
 bool OaepCodificar(const uint8_t* msg, size_t mLen, size_t k, uint8_t* em,
                    char* erro, int tamErro, const char** fonte)
 {
@@ -935,21 +938,21 @@ bool RsaCifrarOaep(const Num& mod, const Num& exp, size_t k,
 }
 
 // ============================================================================
-//  §4 · SOCKET COM PRAZO
+//  §4 · SOCKET WITH A DEADLINE
 // ============================================================================
 
 #ifdef _WIN32
-// WSAStartup uma vez por processo, e NUNCA WSACleanup.
+// WSAStartup once per process, and NEVER WSACleanup.
 //
-// Isto é decisão consciente. O Winsock conta referências; chamar WSACleanup
-// quando este plugin é descarregado derrubaria o Winsock para quem chamou
-// WSAStartup depois de nós e ainda está usando — e o processo aqui é um
-// servidor de jogo, cheio de gente usando rede. Deixar uma referência presa
-// mantém o Winsock carregado até o processo morrer, que é exatamente o que se
-// quer num servidor. O "vazamento" é de uma referência, não de memória.
+// That's a deliberate decision. Winsock counts references; calling WSACleanup
+// when this plugin is unloaded would tear Winsock down for whoever called
+// WSAStartup after us and is still using it. The process here is a game
+// server, full of people using the network. Leaving one reference pinned
+// keeps Winsock loaded until the process dies, which is exactly what you want
+// in a server. The "leak" is one reference, not memory.
 void GarantirWinsock()
 {
-    static std::atomic<int> estado{0};       // 0 = não tentou, 1 = ok, 2 = falhou
+    static std::atomic<int> estado{0};       // 0 = untried, 1 = ok, 2 = failed
     int e = estado.load(std::memory_order_acquire);
     if (e != 0) return;
     WSADATA d;
@@ -965,25 +968,25 @@ int64_t AgoraMs()
 }
 
 // ============================================================================
-//  §5..§7 · O ESTADO DA CONEXÃO
+//  §5..§7 · THE CONNECTION STATE
 // ============================================================================
 
-// Capacidades do cliente. O que NÃO está aqui é tão importante quanto o que está:
+// Client capability flags. What is NOT here matters as much as what is:
 //
-//   CLIENT_LOCAL_FILES (0x80) — DESLIGADO DE PROPÓSITO.
-//     Com ele, o servidor pode responder a QUALQUER consulta com um pedido
-//     "me mande o arquivo X do seu disco", e um cliente obediente manda. É o
-//     ataque conhecido do "rogue MySQL server": basta o dono do servidor de
-//     jogo apontar o config.json para um endereço hostil (ou alguém no meio
-//     do caminho responder por ele) e o processo entrega arquivos da máquina.
-//     Desligado aqui, e ainda assim tratado como erro fatal no §7 se o
-//     servidor tentar mesmo assim.
+//   CLIENT_LOCAL_FILES (0x80) — OFF ON PURPOSE.
+//     With it, the server can answer ANY query with a "send me file X off
+//     your disk" request, and an obedient client sends it. That's the known
+//     "rogue MySQL server" attack: the game server owner only has to point
+//     config.json at a hostile address (or someone in the middle answers for
+//     it) and the process hands over files from the machine. Off here, and
+//     still treated as a fatal error in §7 if the server tries it anyway.
 //
-//   CLIENT_MULTI_STATEMENTS (0x10000) — DESLIGADO DE PROPÓSITO.
-//     Com ele, um `'; DROP TABLE jogador; --` que escapasse do Escapar()
-//     viraria um segundo comando. Sem ele, o servidor recusa a consulta
-//     inteira com erro de sintaxe. É a segunda camada da defesa contra
-//     injeção, e é a que não depende de eu ter escrito o escape sem bug.
+//   CLIENT_MULTI_STATEMENTS (0x10000) — OFF ON PURPOSE.
+//     With it, a `'; DROP TABLE jogador; --` that got past Escapar() would
+//     become a second command. Without it, the server refuses the whole
+//     query with a syntax error. It's the second layer of the defense
+//     against injection, and it's the one that doesn't depend on my having
+//     written the escaping without a bug.
 enum : uint32_t {
     CAP_LONG_PASSWORD     = 0x00000001u,
     CAP_LONG_FLAG         = 0x00000004u,
@@ -997,9 +1000,9 @@ enum : uint32_t {
     CAP_DEPRECATE_EOF     = 0x01000000u
 };
 
-// utf8mb4_general_ci. Existe no MySQL 5.5.3+, no 8.x e no MariaDB — o 255
-// (utf8mb4_0900_ai_ci) só existe do MySQL 8 em diante e seria recusado por um
-// 5.7. Ver INV-MYSQL-004 para por que o conjunto de caracteres importa tanto.
+// utf8mb4_general_ci. Exists in MySQL 5.5.3+, in 8.x and in MariaDB. 255
+// (utf8mb4_0900_ai_ci) only exists from MySQL 8 on, and a 5.7 would refuse
+// it. See INV-MYSQL-004 for why the character set matters this much.
 const uint8_t CHARSET_UTF8MB4 = 45;
 
 enum class Metodo { NENHUM, NATIVO, CACHING_SHA2, SHA256 };
@@ -1047,26 +1050,27 @@ struct MySqlInterno
 
     std::vector<uint8_t> pacote;    // reaproveitado entre leituras
 
-    // Guarda contra uso concorrente. Ver INV-MYSQL-003: duas threads na mesma
-    // conexão intercalam pacotes e o número de sequência passa a bater por
-    // acaso — a consulta de uma thread recebe a resposta da outra, com cara de
-    // resposta certa. Isso NÃO é um erro que apareça em teste; aparece em
-    // produção, raro, e some quando se procura. Melhor recusar.
+    // A guard against concurrent use. See INV-MYSQL-003: two threads on the
+    // same connection interleave packets and the sequence number starts
+    // matching by luck — one thread's query gets the other's answer, wearing
+    // the face of a correct one. That is NOT an error that shows up in a test;
+    // it shows up in production, rarely, and vanishes when you go looking.
+    // Better to refuse.
     std::atomic<bool> emUso{false};
 
-    // ── interrupção pedida por OUTRA thread (só no desligamento) ─────────────
+    // ── an interrupt asked for by ANOTHER thread (shutdown only) ────────────
     //
-    // `interrompido` é definitivo: uma vez pedido, esta conexão não volta a
-    // servir para nada — nem reconectando. Isso é de propósito. O único
-    // chamador é Armazem::Fechar(), e reconectar durante o desligamento seria
-    // abrir socket para um processo que está morrendo.
+    // `interrompido` is final: once asked for, this connection serves nothing
+    // ever again — not even by reconnecting. That's on purpose. The only caller
+    // is Armazem::Fechar(), and reconnecting during shutdown would mean opening
+    // a socket for a process that's dying.
     std::atomic<bool> interrompido{false};
 
-    // Protege APENAS a troca do número do descritor (fechar/anular) e o
-    // shutdown() vindo de fora. Nunca é segurado durante I/O — se fosse,
-    // Interromper() ficaria esperando justamente a operação que ele existe
-    // para desbloquear. Ver o comentário de Interromper() em MySqlCliente.h
-    // para o porquê de shutdown() e não close().
+    // Guards ONLY the swap of the descriptor number (closing/nulling) and the
+    // shutdown() coming from outside. It is never held during I/O — if it were,
+    // Interromper() would end up waiting on precisely the operation it exists
+    // to unblock. See Interromper()'s comment in MySqlCliente.h for why
+    // shutdown() and not close().
     std::mutex mtxSoq;
 
     void Registrar(const char* fmt, ...)
@@ -1083,11 +1087,11 @@ struct MySqlInterno
 
     void Derrubar()
     {
-        // O fechamento entra na trava porque é ele que libera o número do
-        // descritor para o SO reaproveitar. Interromper() segura a mesma trava
-        // para fazer shutdown(); assim as duas nunca acontecem ao mesmo tempo,
-        // e não existe a janela em que o shutdown cairia num descritor que já
-        // virou outro socket deste processo.
+        // The close goes inside the lock because it's what releases the
+        // descriptor number for the OS to reuse. Interromper() holds the same
+        // lock to do its shutdown(); that way the two never happen at once, and
+        // there's no window where the shutdown would land on a descriptor that
+        // has already become another socket in this process.
         std::lock_guard<std::mutex> g(mtxSoq);
         if (soq != SOQ_NULO) { FECHAR_SOQ(soq); soq = SOQ_NULO; }
         quebrado = false;
@@ -1098,7 +1102,7 @@ struct MySqlInterno
 namespace
 {
 
-// Trava de reentrância com RAII.
+// A reentrancy lock, RAII-style.
 class Reserva
 {
 public:
@@ -1115,14 +1119,13 @@ private:
     bool m_ok;
 };
 
-// ── leitura/escrita com prazo absoluto ───────────────────────────────────
+// ── reads and writes with an absolute deadline ───────────────────────────
 //
-// POR QUE UM PRAZO ALÉM DO SO_RCVTIMEO
-// O tempo-limite do socket vale por chamada de recv. Um servidor que mande
-// UM byte a cada 9 segundos nunca dispara o SO_RCVTIMEO de 10 s, e mantém a
-// thread presa para sempre entregando dado de conta-gotas. O prazo absoluto
-// abaixo é o que fecha essa porta: ele mede a operação inteira, não a
-// chamada. (INV-MYSQL-002)
+// WHY A DEADLINE ON TOP OF SO_RCVTIMEO
+// The socket timeout applies per recv call. A server sending ONE byte every 9
+// seconds never trips a 10 s SO_RCVTIMEO, and keeps the thread stuck forever
+// delivering data by eyedropper. The absolute deadline below is what closes
+// that door: it measures the whole operation, not the call. (INV-MYSQL-002)
 bool LerBytes(MySqlInterno& I, uint8_t* p, size_t n, int64_t prazo,
               char* erro, int tamErro)
 {
@@ -1190,8 +1193,8 @@ bool EscreverBytes(MySqlInterno& I, const uint8_t* p, size_t n, int64_t prazo,
         int r = send(I.soq, (const char*)p, (int)(n > 0x40000000u ? 0x40000000u : n), 0);
 #else
         ssize_t r = send(I.soq, p, n, MSG_NOSIGNAL);   // sem SIGPIPE: um pipe
-                                                       // quebrado NÃO pode matar
-                                                       // o processo do jogo
+                                                       // broken must NOT kill
+                                                       // the game's process
 #endif
         if (r > 0) { p += r; n -= (size_t)r; continue; }
         int e = ERRO_SOQ();
@@ -1209,12 +1212,12 @@ bool EscreverBytes(MySqlInterno& I, const uint8_t* p, size_t n, int64_t prazo,
     return true;
 }
 
-// ── camada de pacote ─────────────────────────────────────────────────────
+// ── the packet layer ─────────────────────────────────────────────────────
 //
-// Cabeçalho de 4 bytes: 3 de comprimento (little-endian) + 1 de sequência.
-// Payload de exatamente 0xFFFFFF significa "continua no próximo pacote", e o
-// último da corrente tem menos que isso — inclusive zero. Um payload de
-// 32 MiB chega, então, como 3 pacotes: 16 MiB, 16 MiB e 0.
+// A 4-byte header: 3 of length (little-endian) + 1 of sequence. A payload of
+// exactly 0xFFFFFF means "it continues in the next packet", and the last one in
+// the chain is smaller than that — zero included. So a 32 MiB payload arrives
+// as 3 packets: 16 MiB, 16 MiB and 0.
 bool LerPacote(MySqlInterno& I, std::vector<uint8_t>& payload,
                int64_t prazo, char* erro, int tamErro)
 {
@@ -1228,19 +1231,19 @@ bool LerPacote(MySqlInterno& I, std::vector<uint8_t>& payload,
 
         if (s != I.seq)
         {
-            // INV-MYSQL-003. Não tem conserto: o que vem depois no fio não é
-            // de quem eu acho que é.
+            // INV-MYSQL-003. There's no fixing it: what comes next on the
+            // wire doesn't belong to who I think it does.
             I.quebrado = true;
 
-            // DEFEITO REAL, achado rodando o teste em 18/08/2026: um servidor
-            // HTTP na porta configurada caía aqui, e a mensagem falava em
-            // "duas threads na mesma conexao" — mandando o dono do servidor
-            // procurar exatamente onde não está o problema. Os bytes de
-            // "HTTP/1.1 400" viram um cabeçalho com sequência 0x50 (o 'P').
+            // A REAL DEFECT, found running the test on 2026-08-18: an HTTP
+            // server on the configured port landed here, and the message talked
+            // about "duas threads na mesma conexao" — sending the server owner
+            // to look exactly where the problem isn't. The bytes of
+            // "HTTP/1.1 400" become a header with sequence 0x50 (the 'P').
             //
-            // A distinção é objetiva: só a saudação inicial é esperada com
-            // sequência 0. Se a divergência acontece aí, ninguém
-            // dessincronizou coisa nenhuma — o que respondeu não é um MySQL.
+            // The distinction is objective: only the initial greeting is
+            // expected with sequence 0. If the mismatch happens there, nobody
+            // desynchronised anything — whatever answered isn't a MySQL.
             if (I.seq == 0)
                 Diga(erro, tamErro,
                      "o que atende em '%s:%u' nao fala o protocolo do MySQL (a primeira "
@@ -1249,20 +1252,21 @@ bool LerPacote(MySqlInterno& I, std::vector<uint8_t>& payload,
                      "Confira MysqlPort no config.json — o padrao do MySQL e 3306.",
                      I.hostAtual.c_str(), (unsigned)I.portaAtual, (unsigned)s);
             else
-                // SEGUNDO DEFEITO DE MENSAGEM, achado em 18/08/2026 derrubando
-                // um proxy no meio de uma operação (testes/teste_banco.cpp,
-                // cenário 6): esta linha abria com "duas threads usam a MESMA
-                // conexao" — e isso é IMPOSSÍVEL aqui. Uso concorrente de
-                // verdade é barrado pela reserva `emUso`, que tem mensagem
-                // própria e nem chega neste ponto. Ou seja: a primeira causa
-                // oferecida ao dono do servidor era a única que ele podia
-                // descartar de antemão, e para descobrir isso ele teria de ler
-                // este arquivo.
+                // A SECOND MESSAGING DEFECT, found on 2026-08-18 by killing a
+                // proxy mid-operation (testes/teste_banco.cpp, scenario 6):
+                // this line opened with "duas threads usam a MESMA conexao" —
+                // and that is IMPOSSIBLE here. Real concurrent use is blocked
+                // by the `emUso` reservation, which has a message of its own
+                // and never reaches this point. Meaning: the first cause
+                // offered to the server owner was the one thing they could rule
+                // out in advance, and to find that out they'd have had to read
+                // this file.
                 //
-                // O que realmente produz isto na máquina de um dono: a conexão
-                // foi cortada no meio de uma resposta (banco reiniciado, KILL,
-                // proxy/túnel caindo, NAT expirando a sessão) ou algo entre as
-                // duas pontas mexe no tráfego. Estas vêm primeiro agora.
+                // What actually produces this on an owner's machine: the
+                // connection was cut mid-response (a database restart, a KILL,
+                // a proxy or tunnel dying, NAT expiring the session), or
+                // something between the two ends is touching the traffic. Those
+                // come first now.
                 Diga(erro, tamErro,
                      "o fluxo com o MySQL em '%s:%u' saiu de ordem (esperava o pacote %u e veio "
                      "o %u). Quase sempre e a conexao cortada no meio de uma resposta: o banco "
@@ -1313,9 +1317,9 @@ bool EnviarPacote(MySqlInterno& I, const uint8_t* p, size_t n,
         if (bloco && !EscreverBytes(I, p, bloco, prazo, erro, tamErro)) return false;
         p += bloco;
         restante -= bloco;
-        // Se o bloco encheu, a corrente continua — mesmo que não sobre nada,
-        // e aí o próximo pacote tem comprimento zero. Sem esse pacote vazio o
-        // servidor fica esperando o resto para sempre.
+        // If the block filled up, the chain continues — even when nothing is
+        // left over, and then the next packet has length zero. Without that
+        // empty packet the server waits for the rest forever.
         if (bloco < 0xFFFFFFu) return true;
     }
 }
@@ -1324,16 +1328,16 @@ bool EnviarPacote(MySqlInterno& I, const uint8_t* p, size_t n,
 
 bool EhErr(const std::vector<uint8_t>& p) { return !p.empty() && p[0] == 0xFF; }
 
-// EOF tem de ser distinguido de uma LINHA cujo primeiro valor começa com
-// 0xFE. O critério é o tamanho: 0xFE como prefixo de comprimento variável
-// arrasta 8 bytes atrás, então uma linha assim tem 9 bytes ou mais. Pacote
-// com 0xFE e menos de 9 bytes só pode ser EOF. Confundir os dois faz o
-// leitor parar no meio do resultado — e o fluxo fica desalinhado.
+// EOF has to be told apart from a ROW whose first value starts with 0xFE. The
+// test is the size: 0xFE as a length-encoded prefix drags 8 bytes behind it, so
+// a row like that is 9 bytes or more. A packet with 0xFE and fewer than 9 bytes
+// can only be EOF. Confusing the two makes the reader stop in the middle of the
+// result — and the stream goes out of step.
 bool EhEof(const std::vector<uint8_t>& p) { return p.size() < 9 && !p.empty() && p[0] == 0xFE; }
 
-// ERR: 0xFF + 2 bytes de código + (se protocolo 4.1) '#' + 5 de SQLSTATE + texto.
-// Antes da autenticação o servidor ainda não sabe que falamos 4.1, então o
-// '#' pode não vir. O teste do '#' resolve os dois casos.
+// ERR: 0xFF + 2 bytes of code + (on protocol 4.1) '#' + 5 of SQLSTATE + text.
+// Before authentication the server doesn't yet know we speak 4.1, so the '#'
+// may not come. Testing for the '#' handles both cases.
 void LerErr(const std::vector<uint8_t>& p, unsigned& codigo, std::string& estado,
             std::string& msg)
 {
@@ -1347,7 +1351,7 @@ void LerErr(const std::vector<uint8_t>& p, unsigned& codigo, std::string& estado
     if (c.Restam() >= 6)
     {
         const uint8_t* q = nullptr;
-        // espia sem consumir: só o próximo byte
+        // peek without consuming: just the next byte
         Cursor espia = c;
         uint8_t marca = 0;
         if (espia.U8(marca) && marca == '#')
@@ -1372,10 +1376,10 @@ void LerOk(const std::vector<uint8_t>& p, uint64_t& afetadas, uint64_t& ultimoId
     if (!c.VarInt(ultimoId, nulo)) { ultimoId = 0; return; }
 }
 
-// Traduz o erro do servidor para uma frase que o dono do servidor entenda,
-// mantendo SEMPRE o código e o texto originais no fim — o código é o que
-// permite a ele pesquisar, e o texto é o que permite a mim não ter de prever
-// todos os erros do MySQL.
+// Turns the server's error into a sentence the server owner understands, ALWAYS
+// keeping the original code and text at the end — the code is what lets them
+// search for it, and the text is what saves me from having to anticipate every
+// error MySQL can produce.
 void ExplicarErroDoServidor(unsigned codigo, const std::string& msg,
                             const char* usuario, const char* banco,
                             char* erro, int tamErro)
@@ -1390,17 +1394,18 @@ void ExplicarErroDoServidor(unsigned codigo, const std::string& msg,
              usuario ? usuario : "", codigo, msg.c_str());
         return;
     case 1044:  // ER_DBACCESS_DENIED_ERROR
-        // O MySQL responde 1044 tanto para "o banco existe e voce nao pode"
-        // quanto para "o banco nao existe e voce nao poderia nem saber" — ele
-        // esconde a diferenca de proposito, para nao revelar quais bancos
-        // existem a quem nao tem permissao. Medido no MySQL 8.4.11 em
-        // 18/08/2026: root recebe 1049 (banco inexistente) e um usuario comum
-        // recebe 1044 para o MESMO banco inexistente.
+        // MySQL answers 1044 both for "the database exists and you may not"
+        // and for "the database doesn't exist and you wouldn't even be allowed
+        // to know" — it hides the difference on purpose, so as not to reveal
+        // which databases exist to somebody without permission. Measured on
+        // MySQL 8.4.11 on 2026-08-18: root gets 1049 (database doesn't exist)
+        // and an ordinary user gets 1044 for the SAME missing database.
         //
-        // Por isso a mensagem traz OS DOIS comandos. Dizer so "de GRANT" faria
-        // o dono do servidor tentar dar permissao num banco que nao existe, o
-        // GRANT ate' funcionaria (o MySQL cria a permissao mesmo assim) e a
-        // conexao continuaria falhando — sem ele entender por que.
+        // So the message carries BOTH commands. Saying only "issue a GRANT"
+        // would have the server owner grant permission on a database that
+        // doesn't exist, the GRANT would even succeed (MySQL creates the
+        // permission anyway) and the connection would keep failing — with them
+        // never understanding why.
         Diga(erro, tamErro,
              "o usuario '%s' entrou no MySQL, mas nao conseguiu abrir o banco '%s'. Sao duas "
              "causas possiveis e o MySQL nao diz qual: ou o banco nao existe, ou o usuario nao "
@@ -1448,7 +1453,7 @@ void ExplicarErroDoServidor(unsigned codigo, const std::string& msg,
 
 
 // ============================================================================
-//  §6 · HANDSHAKE E AUTENTICAÇÃO
+//  §6 · HANDSHAKE AND AUTHENTICATION
 // ============================================================================
 namespace
 {
@@ -1487,8 +1492,8 @@ bool LerHandshake(MySqlInterno& I, const std::vector<uint8_t>& p,
         Diga(erro, tamErro, "a saudacao do MySQL veio truncada (sem a versao do servidor).");
         return false;
     }
-    // O MariaDB >= 10 anuncia "5.5.5-10.11.x-MariaDB" porque clientes antigos
-    // não entendiam versão 10.x. O prefixo é enfeite de compatibilidade.
+    // MariaDB >= 10 announces "5.5.5-10.11.x-MariaDB" because older clients
+    // didn't understand a 10.x version. The prefix is compatibility dressing.
     if (h.versao.compare(0, 6, "5.5.5-") == 0) h.versao = h.versao.substr(6);
 
     uint32_t threadId = 0;
@@ -1518,8 +1523,8 @@ bool LerHandshake(MySqlInterno& I, const std::vector<uint8_t>& p,
         c.U8(tamAuth);
         c.Pular(10);                                // reservado, tudo zero
 
-        // A parte 2 do sal tem MAX(13, tamAuth-8) bytes; o último é um '\0'
-        // de enfeite. O sal útil são 20 bytes: 8 + 12.
+        // Part 2 of the salt is MAX(13, tamAuth-8) bytes; the last one is a
+        // decorative '\0'. The useful salt is 20 bytes: 8 + 12.
         size_t n2 = (tamAuth > 8) ? (size_t)(tamAuth - 8) : 0;
         if (n2 < 13) n2 = 13;
         const uint8_t* sal2 = nullptr;
@@ -1544,7 +1549,7 @@ bool LerHandshake(MySqlInterno& I, const std::vector<uint8_t>& p,
     return true;
 }
 
-// mysql_native_password:  SHA1(senha) XOR SHA1( sal || SHA1(SHA1(senha)) )
+// mysql_native_password:  SHA1(password) XOR SHA1( salt || SHA1(SHA1(password)) )
 void RespostaNativa(const char* senha, const uint8_t sal[20], std::vector<uint8_t>& saida)
 {
     saida.clear();
@@ -1558,8 +1563,8 @@ void RespostaNativa(const char* senha, const uint8_t sal[20], std::vector<uint8_
     Limpar(e1, sizeof(e1)); Limpar(e2, sizeof(e2)); Limpar(e3, sizeof(e3));
 }
 
-// caching_sha2_password, caminho rápido:
-//   SHA256(senha) XOR SHA256( SHA256(SHA256(senha)) || sal )
+// caching_sha2_password, the fast path:
+//   SHA256(password) XOR SHA256( SHA256(SHA256(password)) || salt )
 void RespostaCachingSha2(const char* senha, const uint8_t sal[20], std::vector<uint8_t>& saida)
 {
     saida.clear();
@@ -1589,9 +1594,9 @@ bool CalcularResposta(Metodo m, const char* senha, const uint8_t sal[20],
         case Metodo::NATIVO:       RespostaNativa(senha, sal, saida);       return true;
         case Metodo::CACHING_SHA2: RespostaCachingSha2(senha, sal, saida);  return true;
         case Metodo::SHA256:
-            // sha256_password sem TLS não manda escrambleo nenhum na primeira
-            // volta: ou a senha é vazia (manda 1 byte 0x00) ou pede a chave
-            // pública (1 byte 0x01) e cifra depois.
+            // sha256_password without TLS sends no scramble at all on the
+            // first round: either the password is empty (send 1 byte 0x00) or
+            // it asks for the public key (1 byte 0x01) and encrypts after.
             saida.clear();
             if (!senha || !*senha) saida.push_back(0x00);
             else                   saida.push_back(0x01);
@@ -1600,18 +1605,18 @@ bool CalcularResposta(Metodo m, const char* senha, const uint8_t sal[20],
     }
 }
 
-// A frase que a exigência 3 da tarefa pede — com uma correção que só apareceu
-// ao rodar contra o servidor de teste:
+// The sentence requirement 3 of the task asks for — with a correction that only
+// turned up when running against the test server:
 //
-//   O MySQL 8.4 REMOVEU o mysql_native_password. Mandar o dono rodar
-//   `ALTER USER ... IDENTIFIED WITH mysql_native_password` num 8.4 faz o
-//   MySQL responder "ERROR 1524 (HY000): Plugin 'mysql_native_password' is
-//   not loaded" — ou seja, a mensagem de ajuda mandaria ele num beco. Uma
-//   mensagem de erro que leva a uma acao que falha e' pior que nenhuma: ele
-//   perde a tarde achando que fez errado.
+//   MySQL 8.4 REMOVED mysql_native_password. Telling the owner to run
+//   `ALTER USER ... IDENTIFIED WITH mysql_native_password` on an 8.4 makes
+//   MySQL answer "ERROR 1524 (HY000): Plugin 'mysql_native_password' is not
+//   loaded" — so the helpful message would send them down a dead end. An error
+//   message that leads to an action that fails is worse than none: they lose
+//   the afternoon thinking they did it wrong.
 //
-// Por isso a dica é escolhida pela versão que o servidor anunciou no
-// handshake, que já está na mão neste ponto.
+// So the hint is chosen from the version the server announced in the handshake,
+// which is already in hand at this point.
 void DicaDeAutenticacao(const std::string& versao, const char* usuario,
                         char* saida, int tam)
 {
@@ -1656,27 +1661,29 @@ std::string MySqlCliente::Escapar(const char* s)
 
 std::string MySqlCliente::Escapar(const char* s, size_t n)
 {
-    // A tabela é a mesma do mysql_real_escape_string quando o servidor NÃO
-    // está em NO_BACKSLASH_ESCAPES — e Conectar() garante que não está
-    // (INV-MYSQL-004). Cada caso abaixo existe por um motivo concreto:
+    // The table is the same one mysql_real_escape_string uses when the server
+    // is NOT in NO_BACKSLASH_ESCAPES — and Conectar() guarantees it isn't
+    // (INV-MYSQL-004). Every case below is here for a concrete reason:
     //
-    //   0x00  '\0'  termina string em C dentro do servidor; e um NUL no meio
-    //               de um literal quebra o parser do MySQL
-    //   '\n'        quebra de linha em log e em comando de linha de comando
-    //   '\r'        idem
-    //   '\\'        TEM de vir escapada, senão ela escapa a aspa seguinte e o
-    //               atacante fecha o literal:  \' vira barra + fim de string
-    //   '\''        fecha o literal — o vetor de injeção clássico
-    //   '"'         inofensivo dentro de aspas simples, escapado por simetria
-    //               com o cliente oficial (e porque ANSI_QUOTES existe)
-    //   0x1A        Ctrl+Z: no Windows, fim de arquivo em modo texto; corta
-    //               dump e script pela metade
+    //   0x00  '\0'  ends a C string inside the server; and a NUL in the middle
+    //               of a literal breaks MySQL's parser
+    //   '\n'        a line break in a log and on a command line
+    //   '\r'        same
+    //   '\\'        MUST be escaped, or it escapes the quote that follows and
+    //               the attacker closes the literal: \' becomes backslash +
+    //               end of string
+    //   '\''        closes the literal — the classic injection vector
+    //   '"'         harmless inside single quotes, escaped for symmetry with
+    //               the official client (and because ANSI_QUOTES exists)
+    //   0x1A        Ctrl+Z: on Windows, end of file in text mode; it cuts a
+    //               dump or a script in half
     //
-    // Por que byte a byte é seguro aqui: em UTF-8 todo byte de continuação é
-    // >= 0x80, então nenhum caractere multibyte pode terminar em 0x5C ('\')
-    // nem em 0x27 ('\''). Em GBK, SJIS e BIG5 PODE — e é a injeção clássica
-    // do "\xbf\x27". Conectar() força utf8mb4 e confere. Sem essa garantia
-    // esta função seria insegura, e por isso ela mora ao lado dela.
+    // Why going byte by byte is safe here: in UTF-8 every continuation byte is
+    // >= 0x80, so no multibyte character can end in 0x5C ('\') or in 0x27
+    // ('\''). In GBK, SJIS and BIG5 it CAN — and that's the classic
+    // "\xbf\x27" injection. Conectar() forces utf8mb4 and checks. Without that
+    // guarantee this function would be unsafe, which is why it lives next to
+    // it.
     std::string r;
     r.reserve(n + n / 8 + 8);
     for (size_t i = 0; i < n; ++i)
@@ -1704,10 +1711,10 @@ std::string MySqlCliente::Citar(const char* s)
 
 std::string MySqlCliente::Citar(const char* s, size_t n)
 {
-    // Ponteiro nulo vira NULL (sem aspas) porque é isso que o chamador quer
-    // dizer. `Citar(nullptr)` devolvendo `''` transformaria "não tem valor"
-    // em "tem valor vazio" — coisas diferentes no banco, e a diferença só
-    // aparece meses depois num relatório errado.
+    // A null pointer becomes NULL (unquoted) because that's what the caller
+    // means. `Citar(nullptr)` returning `''` would turn "has no value" into
+    // "has an empty value" — different things in the database, and the
+    // difference only shows up months later in a wrong report.
     if (!s) return std::string("NULL");
     std::string r;
     r.reserve(n + n / 8 + 8);
@@ -1737,8 +1744,8 @@ void MySqlCliente::DefinirTempos(int msConectar, int msOperar)
 
 void MySqlCliente::DefinirTetoResposta(size_t bytes)
 {
-    // Piso de 64 KiB: teto menor que uma resposta legítima transformaria o
-    // ajuste numa guarda que reprova o certo.
+    // A 64 KiB floor: a cap smaller than a legitimate response would turn the
+    // setting into a guard that fails correct behaviour.
     if (bytes >= 64u * 1024u) m_i->tetoResposta = bytes;
 }
 
@@ -1756,16 +1763,16 @@ bool MySqlCliente::Conectado() const
 void MySqlCliente::Desconectar()
 {
     if (m_i->soq == SOQ_NULO) return;
-    // Vale a mesma regra do resto da classe: uma conexão, uma thread. Se
-    // outra thread estiver no meio de uma consulta, o COM_QUIT abaixo
-    // atropelaria o fluxo dela — então nesse caso não se manda nada e vai
-    // direto para o fechamento do socket, que é o pedido do chamador.
+    // The same rule as the rest of the class applies: one connection, one
+    // thread. If another thread is in the middle of a query, the COM_QUIT below
+    // would run over its stream — so in that case we send nothing and go
+    // straight to closing the socket, which is what the caller asked for.
     Reserva r(m_i);
     if (!r.Ok()) { m_i->Derrubar(); return; }
-    // COM_QUIT (0x01) por educação: sem ele o MySQL registra "Aborted
-    // connection" no log de erro dele, e o dono do servidor vai achar que tem
-    // problema de rede quando não tem. Se falhar, não importa — vamos fechar
-    // o socket de qualquer jeito.
+    // COM_QUIT (0x01) out of politeness: without it MySQL logs "Aborted
+    // connection" in its own error log, and the server owner will think they
+    // have a network problem when they don't. If it fails, never mind — we're
+    // closing the socket either way.
     m_i->seq = 0;
     const uint8_t quit[1] = { 0x01 };
     int64_t prazo = AgoraMs() + 500;
@@ -1775,10 +1782,10 @@ void MySqlCliente::Desconectar()
 
 void MySqlCliente::Interromper()
 {
-    // A ordem importa: marca ANTES de mexer no socket. Quem estiver no meio de
-    // uma operação vai receber o erro do shutdown e, ao tentar o passo
-    // seguinte, encontrar a marca já posta — em vez de decidir com um estado
-    // que ainda diz "tudo bem".
+    // Order matters: set the flag BEFORE touching the socket. Anyone in the
+    // middle of an operation gets the shutdown's error and, on trying the next
+    // step, finds the flag already set — instead of deciding on a state that
+    // still says "all fine".
     m_i->interrompido.store(true, std::memory_order_release);
 
     std::lock_guard<std::mutex> g(m_i->mtxSoq);
@@ -1794,7 +1801,8 @@ void MySqlCliente::Interromper()
 namespace
 {
 
-// Abre o socket TCP com prazo de conexão. Devolve false com texto pronto.
+// Opens the TCP socket with a connect deadline. Returns false with the text
+// already written.
 bool AbrirSocket(MySqlInterno& I, const char* host, uint16_t porta,
                  char* erro, int tamErro)
 {
@@ -1810,15 +1818,15 @@ bool AbrirSocket(MySqlInterno& I, const char* host, uint16_t porta,
     dica.ai_socktype = SOCK_STREAM;
     dica.ai_protocol = IPPROTO_TCP;
 
-    // PRIMEIRA TENTATIVA: tratar o host como IP literal (AI_NUMERICHOST).
+    // FIRST ATTEMPT: treat the host as a literal IP (AI_NUMERICHOST).
     //
-    // POR QUE ISSO IMPORTA: getaddrinfo NÃO tem tempo-limite portátil. Um DNS
-    // que engole o pacote prende esta thread pelo tempo do resolvedor do
-    // sistema (30 s ou mais no Windows), e nenhum ajuste desta classe alcança
-    // isso. A maioria esmagadora dos config.json reais tem um IP ou
-    // "localhost" — e com AI_NUMERICHOST o IP resolve na hora, sem tocar em
-    // DNS nenhum. Sobra o caso do nome de verdade, onde a espera existe e
-    // está declarada como risco residual no topo deste arquivo.
+    // WHY THAT MATTERS: getaddrinfo has NO portable timeout. A DNS that
+    // swallows the packet pins this thread for as long as the system resolver
+    // takes (30 s or more on Windows), and no setting in this class reaches
+    // that. The overwhelming majority of real config.json files carry an IP or
+    // "localhost" — and with AI_NUMERICHOST an IP resolves instantly, touching
+    // no DNS at all. What's left is the real-hostname case, where the wait does
+    // exist and is declared as a residual risk at the top of this file.
     struct addrinfo* lista = nullptr;
     struct addrinfo dicaNum = dica;
     dicaNum.ai_flags = AI_NUMERICHOST;
@@ -1845,8 +1853,8 @@ bool AbrirSocket(MySqlInterno& I, const char* host, uint16_t porta,
         TSoq s = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
         if (s == SOQ_NULO) { ultimoErro = ERRO_SOQ(); continue; }
 
-        // não-bloqueante só para o connect: é a única forma portátil de dar
-        // prazo ao connect (o SO tem prazo próprio, de dezenas de segundos)
+        // non-blocking for the connect only: it's the one portable way to put
+        // a deadline on connect (the OS has its own, tens of seconds long)
 #ifdef _WIN32
         u_long naoBloqueia = 1;
         ioctlsocket(s, FIONBIO, &naoBloqueia);
@@ -1868,19 +1876,19 @@ bool AbrirSocket(MySqlInterno& I, const char* host, uint16_t porta,
             {
                 int64_t falta = prazo - AgoraMs();
                 if (falta < 0) falta = 0;
-                // ESPERA COM PRAZO PELO FIM DO connect().
+                // A DEADLINE WAIT FOR connect() TO FINISH.
                 //
-                // No Linux e' poll(), NAO select(): o select() do POSIX guarda
-                // os descritores num mapa de bits de FD_SETSIZE (1024) posicoes
-                // indexado pelo VALOR do descritor, e um processo que ja tenha
-                // 1024 arquivos abertos recebe um descritor >= 1024 — aí o
-                // FD_SET escreve fora do fd_set. E comportamento indefinido,
-                // silencioso, e so acontece em servidor carregado: exatamente o
-                // defeito que nao aparece em teste. O poll() nao tem esse teto.
+                // On Linux it's poll(), NOT select(): POSIX's select() keeps
+                // descriptors in an FD_SETSIZE (1024) bitmap indexed by the
+                // descriptor's VALUE, and a process that already has 1024 files
+                // open gets a descriptor >= 1024 — at which point FD_SET writes
+                // outside the fd_set. That's undefined behaviour, silent, and
+                // it only happens on a loaded server: exactly the defect that
+                // doesn't show up in a test. poll() has no such ceiling.
                 //
-                // No Windows o fd_set e' um VETOR de SOCKETs, sem indexacao
-                // pelo valor, e o WSAPoll so existe do Vista em diante — la o
-                // select() e' a escolha certa.
+                // On Windows fd_set is an ARRAY of SOCKETs, with no indexing by
+                // value, and WSAPoll only exists from Vista on — there select()
+                // is the right choice.
                 int sel;
                 bool pronto = false;
 #ifdef _WIN32
@@ -1924,8 +1932,8 @@ bool AbrirSocket(MySqlInterno& I, const char* host, uint16_t porta,
 
         if (!ok) { FECHAR_SOQ(s); continue; }
 
-        // volta ao modo bloqueante: daqui em diante quem manda no tempo é o
-        // SO_RCVTIMEO/SO_SNDTIMEO mais o prazo absoluto de cada operação
+        // back to blocking mode: from here on, timing is governed by
+        // SO_RCVTIMEO/SO_SNDTIMEO plus each operation's absolute deadline
 #ifdef _WIN32
         u_long bloqueia = 0;
         ioctlsocket(s, FIONBIO, &bloqueia);
@@ -1941,9 +1949,9 @@ bool AbrirSocket(MySqlInterno& I, const char* host, uint16_t porta,
         setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tvo, sizeof(tvo));
         setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tvo, sizeof(tvo));
 #endif
-        // O protocolo é pergunta-resposta curta. Sem TCP_NODELAY, o Nagle
-        // segura o pacote esperando companhia e cada consulta ganha até
-        // 40 ms de atraso à toa.
+        // The protocol is short question, short answer. Without TCP_NODELAY,
+        // Nagle holds the packet waiting for company and every query picks up
+        // as much as 40 ms of delay for nothing.
         int um = 1;
         setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&um, sizeof(um));
         setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, (const char*)&um, sizeof(um));
@@ -1985,7 +1993,7 @@ bool AbrirSocket(MySqlInterno& I, const char* host, uint16_t porta,
     return false;
 }
 
-// Executa um comando simples esperando OK. Usado pelo endurecimento pós-login.
+// Runs a simple command expecting an OK. Used by the post-login hardening.
 bool ComandoSimples(MySqlInterno& I, const char* sql, char* erro, int tamErro);
 bool ConsultaUmValor(MySqlInterno& I, const char* sql, std::string& valor,
                      bool& achou, char* erro, int tamErro);
@@ -2005,10 +2013,10 @@ bool MySqlCliente::Conectar(const char* host, uint16_t porta, const char* usuari
              "precisa da sua propria conexao — compartilhar uma so embaralha as respostas.");
         return false;
     }
-    // Interromper() é definitivo (ver MySqlCliente.h): quem pediu foi o
-    // desligamento do servidor. Abrir socket novo aqui seria conectar a partir
-    // de um processo que está morrendo, e ainda faria o join do Armazem esperar
-    // por uma conexão inteira.
+    // Interromper() is final (see MySqlCliente.h): what asked for it was the
+    // server's shutdown. Opening a new socket here would mean connecting from a
+    // process that's dying, and it would also make Armazem's join wait out a
+    // whole connection.
     if (m_i->interrompido.load(std::memory_order_acquire))
     {
         Diga(erro, tamErro, "o servidor esta desligando; nao abro conexao nova com o MySQL.");
@@ -2044,7 +2052,7 @@ bool MySqlCliente::Conectar(const char* host, uint16_t porta, const char* usuari
 
         int64_t prazo = AgoraMs() + m_i->msOperar;
 
-        // ── 1. saudação do servidor ─────────────────────────────────────
+        // ── 1. the server's greeting ────────────────────────────────────
         std::vector<uint8_t>& p = m_i->pacote;
         if (!LerPacote(*m_i, p, prazo, erro, tamErro)) { m_i->Derrubar(); return false; }
 
@@ -2096,8 +2104,8 @@ bool MySqlCliente::Conectar(const char* host, uint16_t porta, const char* usuari
         if (h.capacidades & CAP_PLUGIN_AUTH) cap |= CAP_PLUGIN_AUTH;
         if (banco && *banco && (h.capacidades & CAP_CONNECT_WITH_DB))
             cap |= CAP_CONNECT_WITH_DB;
-        // Só anunciamos o que o servidor também tem. E jamais LOCAL_FILES nem
-        // MULTI_STATEMENTS — ver o comentário do enum de capacidades.
+        // We only announce what the server has too. And never LOCAL_FILES or
+        // MULTI_STATEMENTS — see the capability enum's comment.
         cap &= (h.capacidades | CAP_PROTOCOL_41 | CAP_SECURE_CONNECTION | CAP_LONG_PASSWORD);
         m_i->capUsadas = cap;
 
@@ -2139,7 +2147,7 @@ bool MySqlCliente::Conectar(const char* host, uint16_t porta, const char* usuari
         Limpar(saida.data(), saida.size());
         Limpar(resposta.data(), resposta.size());
 
-        // ── 3. o vai-e-vem da autenticação ──────────────────────────────
+        // ── 3. the authentication back-and-forth ────────────────────────
         uint8_t salAtual[20];
         memcpy(salAtual, h.sal, 20);
         int voltas = 0;
@@ -2147,9 +2155,9 @@ bool MySqlCliente::Conectar(const char* host, uint16_t porta, const char* usuari
         {
             if (++voltas > 12)
             {
-                // Um servidor forjado pode mandar AuthSwitchRequest para
-                // sempre. 12 voltas é muito mais que qualquer fluxo real
-                // (o pior caso real são 4).
+                // A forged server can send AuthSwitchRequest forever. 12
+                // rounds is far more than any real flow (the real worst case
+                // is 4).
                 Diga(erro, tamErro,
                      "o MySQL em '%s:%u' ficou trocando de metodo de autenticacao sem parar. "
                      "Desisti para nao ficar preso.", host, (unsigned)porta);
@@ -2245,8 +2253,9 @@ bool MySqlCliente::Conectar(const char* host, uint16_t porta, const char* usuari
                              "que eu nao conheco (0x%02X).", (unsigned)p[1]);
                         m_i->Derrubar(); return false;
                     }
-                    // 0x04 = autenticação completa. Sem TLS, o caminho é
-                    // pedir a chave pública e mandar a senha cifrada.
+                    // 0x04 = full authentication. Without TLS, the path is to
+                    // ask for the public key and send the password
+                    // encrypted.
                     if (!senha || !*senha)
                     {
                         Diga(erro, tamErro,
@@ -2289,8 +2298,8 @@ bool MySqlCliente::Conectar(const char* host, uint16_t porta, const char* usuari
                                   erro, tamErro))
                     { m_i->Derrubar(); return false; }
 
-                    // senha + '\0', XOR com o sal repetido — exatamente o que
-                    // o servidor desfaz do outro lado
+                    // password + '\0', XORed with the repeated salt — exactly
+                    // what the server undoes on the other side
                     size_t tamSenha = strlen(senha) + 1;
                     std::vector<uint8_t> claro(tamSenha);
                     memcpy(claro.data(), senha, tamSenha);
@@ -2313,8 +2322,8 @@ bool MySqlCliente::Conectar(const char* host, uint16_t porta, const char* usuari
                 }
                 if (metodo == Metodo::SHA256)
                 {
-                    // sha256_password sem TLS: o servidor manda a chave
-                    // pública em resposta ao nosso 0x01.
+                    // sha256_password without TLS: the server sends the
+                    // public key in answer to our 0x01.
                     Num mod, expo; size_t k = 0;
                     if (!RsaDoPem((const char*)p.data() + 1, p.size() - 1, mod, expo, k,
                                   erro, tamErro))
@@ -2344,16 +2353,17 @@ bool MySqlCliente::Conectar(const char* host, uint16_t porta, const char* usuari
             return false;
         }
 
-        // ── 4. endurecimento pós-login (INV-MYSQL-004) ──────────────────
+        // ── 4. post-login hardening (INV-MYSQL-004) ─────────────────────
         //
-        // A conexão está aberta, mas ainda NÃO está apta a receber SQL
-        // interpolado. Duas condições do servidor tornam Escapar() inseguro,
-        // as duas silenciosas, e as duas são conferidas aqui.
+        // The connection is open, but it is NOT yet fit to receive interpolated
+        // SQL. Two server conditions make Escapar() unsafe, both silent, and
+        // both are checked here.
 
-        // (a) conjunto de caracteres. Em GBK/SJIS/BIG5 o byte 0x5C ('\') pode
-        //     ser a segunda metade de um caractere, e a barra que eu ponho na
-        //     frente da aspa é engolida pelo caractere anterior — a aspa
-        //     escapa e a injeção passa. Em utf8mb4 isso é impossível.
+        // (a) the character set. In GBK/SJIS/BIG5 the byte 0x5C ('\') can be
+        //     the second half of a character, and the backslash I put in front
+        //     of the quote gets swallowed by the preceding character — the
+        //     quote escapes and the injection goes through. In utf8mb4 that's
+        //     impossible.
         if (!ComandoSimples(*m_i, "SET NAMES utf8mb4", erro, tamErro))
         {
             Diga(erro, tamErro,
@@ -2365,12 +2375,12 @@ bool MySqlCliente::Conectar(const char* host, uint16_t porta, const char* usuari
             return false;
         }
 
-        // (b) NO_BACKSLASH_ESCAPES. Com esse modo ligado, o servidor NÃO
-        //     entende '\' como escape, e o meu \' vira uma barra seguida de
-        //     uma aspa que FECHA o literal. Todo Escapar() deste arquivo
-        //     passaria a produzir SQL injetável, sem erro nenhum.
-        //     Tento tirar do modo só desta sessão; se não sair, a conexão
-        //     morre aqui. Falha fechada.
+        // (b) NO_BACKSLASH_ESCAPES. With that mode on, the server does NOT
+        //     read '\' as an escape, and my \' becomes a backslash followed by
+        //     a quote that CLOSES the literal. Every Escapar() in this file
+        //     would start producing injectable SQL, with no error at all.
+        //     We try to drop the mode for this session only; if it won't drop,
+        //     the connection dies here. Fail closed.
         {
             std::string modo; bool achou = false;
             if (!ConsultaUmValor(*m_i, "SELECT @@SESSION.sql_mode", modo, achou, erro, tamErro))
@@ -2427,8 +2437,8 @@ bool MySqlCliente::Conectar(const char* host, uint16_t porta, const char* usuari
 namespace
 {
 
-// Núcleo compartilhado por Executar e Consultar. 'linha' pode ser nulo — aí
-// as linhas são lidas e descartadas (mas SÃO lidas: ver INV-MYSQL-003).
+// The core shared by Executar and Consultar. 'linha' can be null — then the
+// rows are read and thrown away (but they ARE read: see INV-MYSQL-003).
 bool Comando(MySqlInterno& I, const char* sql,
              void (*linha)(void*, int, const char* const*), void* ctx,
              char* erro, int tamErro)
@@ -2439,14 +2449,15 @@ bool Comando(MySqlInterno& I, const char* sql,
     I.colunas.clear();
     I.comprimentos.clear();
 
-    // Devolve a memoria de uma resposta grande ANTERIOR.
+    // Gives back the memory of a PREVIOUS large response.
     //
-    // O buffer e reaproveitado de proposito (uma alocacao por conexao, nao uma
-    // por consulta), mas std::vector nunca encolhe sozinho: uma unica consulta
-    // que trouxesse 50 MB deixaria esses 50 MB presos pelo resto da vida do
-    // processo do jogo. Ninguem liga isso ao banco depois — vira "o servidor
-    // esta comendo memoria" e a caca comeca no lugar errado. 1 MiB cobre com
-    // folga qualquer resposta desta aplicacao; acima disso a memoria volta.
+    // The buffer is reused on purpose (one allocation per connection, not one
+    // per query), but a std::vector never shrinks on its own: a single query
+    // that brought back 50 MB would leave those 50 MB pinned for the rest of
+    // the game process's life. Nobody connects that to the database afterwards
+    // — it becomes "the server is eating memory" and the hunt starts in the
+    // wrong place. 1 MiB comfortably covers any response this application
+    // makes; above that the memory goes back.
     if (I.pacote.capacity() > 1024u * 1024u)
         std::vector<uint8_t>().swap(I.pacote);
 
@@ -2466,7 +2477,7 @@ bool Comando(MySqlInterno& I, const char* sql,
     int64_t prazo = AgoraMs() + I.msOperar;
     size_t nSql = strlen(sql);
 
-    // COM_QUERY = 0x03. Cada comando começa uma sequência nova em 0.
+    // COM_QUERY = 0x03. Every command starts a new sequence at 0.
     I.seq = 0;
     std::vector<uint8_t> req;
     req.reserve(nSql + 1);
@@ -2488,7 +2499,7 @@ bool Comando(MySqlInterno& I, const char* sql,
         unsigned cod = 0; std::string est, msg;
         LerErr(p, cod, est, msg);
         I.codigoMysql = cod;
-        // Erro do servidor NÃO quebra a conexão: ela continua utilizável.
+        // A server error does NOT break the connection: it stays usable.
         Diga(erro, tamErro, "o MySQL recusou o comando (erro %u%s%s): %s",
              cod, est.empty() ? "" : ", SQLSTATE ", est.c_str(), msg.c_str());
         return false;
@@ -2500,9 +2511,9 @@ bool Comando(MySqlInterno& I, const char* sql,
     }
     if (p[0] == 0xFB)
     {
-        // LOCAL INFILE. Nunca pedimos CLIENT_LOCAL_FILES, então um servidor
-        // que manda isso está tentando fazer este processo ler arquivos do
-        // disco e entregá-los — o ataque conhecido do "rogue MySQL server".
+        // LOCAL INFILE. We never ask for CLIENT_LOCAL_FILES, so a server
+        // sending this is trying to make this process read files off disk and
+        // hand them over — the known "rogue MySQL server" attack.
         I.quebrado = true;
         Diga(erro, tamErro,
              "o servidor em '%s:%u' pediu para eu ENVIAR UM ARQUIVO do disco desta maquina "
@@ -2512,7 +2523,7 @@ bool Comando(MySqlInterno& I, const char* sql,
         return false;
     }
 
-    // Cabeçalho de resultado: número de colunas (inteiro variável)
+    // Result header: the column count (a length-encoded integer)
     uint64_t nCols = 0; bool nulo = false;
     {
         Cursor c(p.data(), p.size());
@@ -2527,15 +2538,15 @@ bool Comando(MySqlInterno& I, const char* sql,
         }
     }
 
-    // Definição das colunas
+    // The column definitions
     I.colunas.resize((size_t)nCols);
     for (uint64_t i = 0; i < nCols; ++i)
     {
         if (!LerPacote(I, p, prazo, erro, tamErro)) return false;
         Cursor c(p.data(), p.size());
         const uint8_t* q = nullptr; size_t n = 0; bool nl = false;
-        // catalog, schema, table, org_table, name — todos com comprimento
-        // variável na frente. Só o `name` interessa.
+        // catalog, schema, table, org_table, name — each length-encoded up
+        // front. Only `name` is of any interest.
         if (!c.VarStr(&q, n, nl) || !c.VarStr(&q, n, nl) || !c.VarStr(&q, n, nl)
             || !c.VarStr(&q, n, nl) || !c.VarStr(&q, n, nl))
         {
@@ -2546,9 +2557,9 @@ bool Comando(MySqlInterno& I, const char* sql,
         I.colunas[(size_t)i].assign(q ? (const char*)q : "", n);
     }
 
-    // Com CLIENT_DEPRECATE_EOF desligado (é o nosso caso), vem um EOF aqui
-    // separando colunas de linhas. Servidor que não mande é servidor que já
-    // está mandando a primeira linha — os dois casos são tratados.
+    // With CLIENT_DEPRECATE_EOF off (which is our case), an EOF comes here
+    // separating columns from rows. A server that doesn't send one is a server
+    // already sending the first row — both cases are handled.
     if (!LerPacote(I, p, prazo, erro, tamErro)) return false;
     bool primeiraJaLida = !EhEof(p);
 
@@ -2572,8 +2583,8 @@ bool Comando(MySqlInterno& I, const char* sql,
         }
         if (p[0] == 0xFF)
         {
-            // O MySQL pode abortar um resultado no meio (por exemplo, erro de
-            // conversão numa linha). O fluxo continua íntegro.
+            // MySQL can abort a result midway (a conversion error on a row,
+            // say). The stream stays intact.
             unsigned cod = 0; std::string est, msg;
             LerErr(p, cod, est, msg);
             I.codigoMysql = cod;
@@ -2619,9 +2630,9 @@ bool Comando(MySqlInterno& I, const char* sql,
             }
             catch (...)
             {
-                // INV-MYSQL-001 e INV-MYSQL-003: a exceção do chamador não
-                // atravessa, e o resto do resultado ficou no fio — a conexão
-                // não serve mais.
+                // INV-MYSQL-001 and INV-MYSQL-003: the caller's exception
+                // doesn't cross, and the rest of the result was left on the
+                // wire — this connection is no good any more.
                 I.quebrado = true;
                 Diga(erro, tamErro,
                      "a funcao que recebe as linhas lancou uma excecao. Abortei a consulta e "
@@ -2679,8 +2690,8 @@ bool MySqlCliente::Executar(const char* sql, char* erro, int tamErro)
     }
     try
     {
-        // 'linha' nulo: se o SQL devolver linhas por engano, elas são lidas e
-        // jogadas fora. Deixar de ler é que dessincroniza o fluxo.
+        // 'linha' null: if the SQL returns rows by mistake, they're read and
+        // thrown away. Not reading them is what desynchronises the stream.
         return Comando(*m_i, sql, nullptr, nullptr, erro, tamErro);
     }
     catch (const std::bad_alloc&)

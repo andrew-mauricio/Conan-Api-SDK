@@ -1,71 +1,72 @@
 // ============================================================================
-//  Armazem.cpp — a DECISÃO (que dados guardar) + instantâneo em memória
+//  Armazem.cpp — the DECISION (what data to store) + the in-memory snapshot
 //
-//  O MEIO SAIU DAQUI (18/08/2026)
-//  ------------------------------
-//  Este arquivo tinha 161 chamadas sqlite3_* no corpo. Agora fala com
-//  Perm::IBanco (Banco.h), e existem duas implementações: BancoSqlite — o
-//  padrão, e é o texto abaixo que explica por que ele é bom — e BancoMysql,
-//  para o dono que quiser apontar o plugin ao MySQL dele mexendo numa linha do
-//  config.json.
+//  THE MEDIUM MOVED OUT OF HERE (2026-08-18)
+//  -----------------------------------------
+//  This file used to have 161 sqlite3_* calls in its body. It now talks to
+//  Perm::IBanco (Banco.h), and there are two implementations: BancoSqlite — the
+//  default, and the text below is what explains why it's a good one — and
+//  BancoMysql, for the owner who wants to point the plugin at their MySQL by
+//  changing one line of config.json.
 //
-//  O que NÃO mudou, e é o ponto: a lógica de permissão. Herança achatada uma
-//  vez fora do laço, peso do casamento, negação específica vencendo curinga,
-//  instantâneo publicado por troca atômica de ponteiro, contagem de leitores.
-//  Nada disso sabe qual banco está embaixo, e nada disso foi reescrito.
+//  What did NOT change, and that's the point: the permission logic. Inheritance
+//  flattened once outside the loop, match weight, a specific denial beating a
+//  wildcard, the snapshot published by atomic pointer swap, the reader count.
+//  None of it knows which database is underneath, and none of it was rewritten.
 //
-//  POR QUE SQLITE CONTINUA SENDO O PADRÃO, E NÃO ARQUIVO PRÓPRIO
-//  ------------------------------------------------------------
-//  Não foi escolha por gosto. Três fatos deste ambiente decidiram:
+//  WHY SQLITE IS STILL THE DEFAULT, AND NOT A FORMAT OF OUR OWN
+//  -----------------------------------------------------------
+//  It wasn't a matter of taste. Three facts about this environment decided it:
 //
-//  1. O PRÓPRIO JOGO JÁ FAZ ISSO, AQUI, AGORA. O save do Conan é um SQLite:
-//     ConanSandbox/Saved/game_0.db, em modo WAL — os arquivos game_0.db-wal e
-//     game_0.db-shm existem ao lado dele com o servidor no ar. Ou seja: SQLite
-//     em WAL, sob Wine, dentro deste processo, já é um caminho PROVADO em
-//     produção pelo fabricante do jogo. Nenhum formato próprio chega perto
-//     desse nível de evidência.
+//  1. THE GAME ITSELF ALREADY DOES THIS, HERE, NOW. Conan's save is a SQLite:
+//     ConanSandbox/Saved/game_0.db, in WAL mode — the game_0.db-wal and
+//     game_0.db-shm files sit beside it with the server up. So: SQLite in WAL,
+//     under Wine, inside this process, is already a path PROVED in production
+//     by the game's maker. No format of our own comes close to that level of
+//     evidence.
 //
-//  2. QUEDA NO MEIO DA ESCRITA. Um arquivo JSON reescrito por cima perde tudo
-//     se o servidor morrer no meio; com rename atômico perde a última escrita.
-//     O WAL do SQLite dá commit atômico e recuperação automática na abertura:
-//     ou a transação inteira valeu, ou nenhuma parte dela valeu, e o arquivo
-//     nunca fica pela metade. Para "o VIP que o jogador acabou de comprar", a
-//     diferença entre essas duas garantias é dinheiro.
+//  2. A CRASH MID-WRITE. A JSON file rewritten in place loses everything if the
+//     server dies halfway; with an atomic rename it loses the last write.
+//     SQLite's WAL gives atomic commit and automatic recovery on open: either
+//     the whole transaction counted or none of it did, and the file is never
+//     left half-written. For "the VIP the player just bought", the difference
+//     between those two guarantees is money.
 //
-//  3. A LIÇÃO DO WAL, QUE ESTE PROJETO JÁ PAGOU. Apagar um SQLite sem apagar o
-//     -wal faz o dado RESSUSCITAR, e o apagamento parece feito. Isso não é
-//     argumento contra o WAL: é argumento para documentar e para dar o comando
-//     certo. Ver README-PERMISSION.md, seção "apagar de verdade". A alternativa
-//     (formato próprio) não tem WAL e tem um problema pior: nenhuma garantia.
+//  3. THE WAL LESSON THIS PROJECT ALREADY PAID FOR. Deleting a SQLite without
+//     deleting the -wal makes the data COME BACK, and the deletion looks done.
+//     That isn't an argument against WAL: it's an argument for documenting it
+//     and giving the right command. See README-PERMISSION.md, section "deleting
+//     for real". The alternative (a format of our own) has no WAL and has a
+//     worse problem: no guarantee at all.
 //
-//  E o custo? Zero na leitura, porque a leitura NÃO PASSA POR AQUI. SQLite é o
-//  armazém durável; o laço do jogo lê de um instantâneo em memória.
+//  And the cost? Zero on reads, because reads DON'T COME THROUGH HERE. SQLite
+//  is the durable store; the game loop reads from an in-memory snapshot.
 //
-//  O QUE NÃO SE FAZ, EM HIPÓTESE NENHUMA
-//  ------------------------------------
-//  Não se toca no game_0.db do jogo. Nem para ler. O banco do Permission é
-//  arquivo próprio, em pasta própria. Se corrompêssemos o save, o dono do
-//  servidor perderia o mundo — e não há permissão de VIP no mundo que pague
-//  isso. Um SELECT nosso concorrendo com o writer do jogo também é risco de
-//  travar o save. Fica fora.
+//  WHAT IS NEVER DONE, UNDER ANY CIRCUMSTANCES
+//  -------------------------------------------
+//  The game's game_0.db is not touched. Not even to read. Permission's database
+//  is its own file, in its own folder. If we corrupted the save, the server
+//  owner would lose their world — and there's no VIP permission on earth that
+//  pays for that. A SELECT of ours competing with the game's writer also risks
+//  locking the save. It stays out.
 //
-//  JSON SEM PARSER PRÓPRIO
-//  -----------------------
-//  A configuração continua sendo lida com o json1 do SQLite (json_valid,
-//  json_extract, json_each), não com um parser escrito à mão. Parser de JSON à
-//  mão é ~200 linhas de código novo que ninguém revisou, lendo arquivo que o
-//  dono do servidor edita à mão — ou seja, entrada hostil por definição.
+//  JSON WITHOUT A PARSER OF OUR OWN
+//  --------------------------------
+//  The configuration is still read with SQLite's json1 (json_valid,
+//  json_extract, json_each), not with a hand-written parser. A hand-written
+//  JSON parser is ~200 lines of new code nobody reviewed, reading a file the
+//  server owner edits by hand — which is hostile input by definition.
 //
-//  O que mudou é ONDE: antes o json1 cruzava direto com as tabelas reais num
-//  SQL só, o que não atravessa para o MySQL (json_each é função de tabela do
-//  SQLite; o MySQL 5.7 não tem JSON_TABLE nenhum). Agora o json1 roda num
-//  SQLite EM MEMÓRIA, devolve struct, e quem grava é a interface — mesmo
-//  caminho de configuração para os dois bancos. Ver LerConfigPermissao, em
-//  Banco.cpp.
+//  What changed is WHERE: json1 used to join directly against the real tables
+//  in a single SQL statement, which doesn't carry over to MySQL (json_each is a
+//  SQLite table function; MySQL 5.7 has no JSON_TABLE at all). Now json1 runs
+//  in an IN-MEMORY SQLite, returns a struct, and the interface does the
+//  writing — the same configuration path for both databases. See
+//  LerConfigPermissao, in Banco.cpp.
 // ============================================================================
 #include "Armazem.h"
 
-#include <windows.h>      // só pelo relógio; ver Agora(). O motivo está lá.
+#include <windows.h>      // for the clock only; see Agora(). The reason is there.
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
@@ -76,55 +77,56 @@ namespace Perm
 {
 namespace
 {
-    // ── o esquema mudou de arquivo, e vale dizer para onde ──────────────────
+    // ── the schema moved to another file, and it's worth saying where ───────
     //
-    // O texto do esquema (nas DUAS formas: sqlite e mysql) mora em Banco.cpp,
-    // porque é a parte que depende do meio. O que continua sendo assunto DAQUI
-    // é o que ele significa:
+    // The schema's text (in BOTH forms: sqlite and mysql) lives in Banco.cpp,
+    // because that's the part that depends on the medium. What remains this
+    // file's business is what it means:
     //
-    // As TRÊS camadas de nome de grupo, e por que existem três:
+    // The THREE layers of a group's name, and why there are three:
     //
-    //   grupo.id     inteiro, imutável, invisível. É o que jogador_grupo
-    //                referencia. Renomear qualquer coisa NUNCA mexe nele — é
-    //                exatamente por isso que renomear não perde dado.
-    //   grupo.chave  o nome técnico, o que plugin e comando usam ("vip").
-    //                Renomeável: ver "era" no permission.json. Ao renomear, a
-    //                chave antiga fica gravada como APELIDO, então o plugin de
-    //                VIP que foi compilado perguntando por "vip" continua
-    //                acertando depois do renome para "premium".
-    //   grupo.nome   o rótulo que o jogador vê no chat ("Patrono do Exílio").
-    //                Livre, ninguém referencia, muda quando quiser.
+    //   grupo.id     an integer, immutable, invisible. It's what jogador_grupo
+    //                references. Renaming anything NEVER touches it — which is
+    //                exactly why renaming loses no data.
+    //   grupo.chave  the technical name, what plugins and commands use ("vip").
+    //                Renameable: see "era" in permission.json. On a rename the
+    //                old key is stored as an ALIAS, so the VIP plugin compiled
+    //                asking for "vip" keeps getting it right after the rename
+    //                to "premium".
+    //   grupo.nome   the label the player sees in chat ("Patrono do Exílio").
+    //                Free, referenced by nobody, change it whenever.
     //
-    // Sem essas três camadas, "permita alterar o nome" só tem duas saídas
-    // ruins: ou o renome quebra os plugins, ou não renomeia nada de verdade.
+    // Without those three layers, "let them change the name" has only two bad
+    // outcomes: either the rename breaks the plugins, or nothing is really
+    // renamed.
 
     constexpr int ESQUEMA_VERSAO = 1;
 
-    // ── o relógio, e o defeito que a MEDIÇÃO achou ───────────────────────────
+    // ── the clock, and the defect MEASUREMENT found ──────────────────────────
     //
-    // A primeira versão desta função era `return std::time(nullptr);`, com um
-    // comentário meu afirmando que era barato porque "no Windows lê
-    // KUSER_SHARED_DATA, sem syscall". O comentário estava ERRADO, e o teste
-    // rodando sob Wine cobrou:
+    // The first version of this function was `return std::time(nullptr);`, with
+    // a comment of mine claiming it was cheap because "on Windows it reads
+    // KUSER_SHARED_DATA, no syscall". The comment was WRONG, and the test
+    // running under Wine charged for it:
     //
-    //     std::time(nullptr)          32.418,0 ns/op      <<< 32 microssegundos
-    //     GetTickCount64()                  2,5 ns/op
-    //     GetSystemTimeAsFileTime()       201,1 ns/op
+    //     std::time(nullptr)          32,418.0 ns/op      <<< 32 microseconds
+    //     GetTickCount64()                  2.5 ns/op
+    //     GetSystemTimeAsFileTime()       201.1 ns/op
     //
-    // 32 µs por leitura de permissão. Com 40 jogadores a 60 Hz isso é 78% de um
-    // núcleo gasto perguntando a hora. E o pior: TUDO compilava, TUDO passava
-    // nos 44 testes de comportamento. Só o teste de custo, rodando de verdade,
-    // separou — exatamente o que "compilar não prova nada" quer dizer.
+    // 32 us per permission read. With 40 players at 60 Hz that's 78% of a core
+    // spent asking the time. And worse: EVERYTHING compiled, EVERYTHING passed
+    // the 44 behavioural tests. Only the cost test, actually running, told them
+    // apart — exactly what "compiling proves nothing" means.
     //
-    // O conserto NÃO é uma thread que atualiza um relógio em cache. Aquela
-    // versão tem um modo de falha silencioso: se a thread morrer ou atrasar, o
-    // relógio congela e VIP vencido vale para sempre, sem log.
+    // The fix is NOT a thread refreshing a cached clock. That version has a
+    // silent failure mode: if the thread dies or falls behind, the clock
+    // freezes and an expired VIP lasts forever, with no log line.
     //
-    // Aqui o segundo é DERIVADO do tique monotônico. Mesmo que nada nunca
-    // reancore, a resposta continua andando, porque GetTickCount64 anda sozinho.
-    // Não existe estado que possa congelar: o pior caso é a deriva entre o
-    // relógio de parede e o tique, que é de milissegundos por hora — irrelevante
-    // para "o VIP vence hoje às 20h".
+    // Here the second is DERIVED from the monotonic tick. Even if nothing ever
+    // re-anchors, the answer keeps moving, because GetTickCount64 moves on its
+    // own. There's no state that can freeze: the worst case is drift between
+    // wall clock and tick, which is milliseconds per hour — irrelevant to "the
+    // VIP expires today at 8pm".
     inline int64_t Agora()
     {
         static std::atomic<int64_t>  s_seg{0};      // segundos desde 1970 na âncora
@@ -140,7 +142,7 @@ namespace
             GetSystemTimeAsFileTime(&ft);           // 201 ns, e é o relógio real
             const uint64_t u = (static_cast<uint64_t>(ft.dwHighDateTime) << 32)
                              | ft.dwLowDateTime;
-            // FILETIME conta 100 ns desde 1601; 11644473600 s separam 1601 de 1970
+            // FILETIME counts 100 ns since 1601; 11,644,473,600 s separate 1601 from 1970
             const int64_t seg = static_cast<int64_t>(u / 10000000ULL) - 11644473600LL;
             s_seg.store(seg,  std::memory_order_relaxed);
             s_tick.store(t,   std::memory_order_relaxed);
@@ -152,72 +154,74 @@ namespace
     inline bool Vencido(int64_t expira, int64_t agora)
     { return expira != 0 && expira <= agora; }
 
-    // ── tetos da fila de escrita (INV-ARMAZEM-004) ──────────────────────────
+    // ── the write queue's caps (INV-ARMAZEM-004) ────────────────────────────
     //
-    // O DEFEITO QUE ISTO CONSERTA, e ele derrubava o servidor de jogo
+    // THE DEFECT THIS FIXES, and it was taking the game server down
     // -------------------------------------------------------------
-    // A fila não tinha teto. `VerJogador` é chamado de dentro de
-    // `ConanPermId()` (Permission.cpp), que é uma função de laço de jogo: todo
-    // plugin que resolve identidade enfileira um `visto` a cada 250 ms por
-    // objeto do jogo. Com 40 jogadores e três objetos cada, isso é da ordem de
-    // centenas de tarefas por segundo — e o SQLite dá conta.
+    // The queue had no cap. `VerJogador` is called from inside `ConanPermId()`
+    // (Permission.cpp), which is a game-loop function: every plugin resolving
+    // an identity queues a `seen` every 250 ms per game object. With 40 players
+    // and three objects each, that's on the order of hundreds of tasks a second
+    // — and SQLite keeps up.
     //
-    // O MySQL do dono, não necessariamente. Com 2 s por consulta (rede ruim,
-    // banco do outro lado do país — o cenário 8 desta tarefa), a thread
-    // escritora drena menos de uma tarefa por segundo enquanto a fila cresce a
-    // centenas. Cada tarefa carrega quatro std::string. Isso não é lentidão:
-    // é o processo do SERVIDOR DE JOGO subindo de memória até morrer, por causa
-    // de um banco lento. Exatamente o que esta tarefa proíbe.
+    // The owner's MySQL, not necessarily. At 2 s per query (a bad network, a
+    // database on the other side of the country — scenario 8 of this task), the
+    // writer thread drains less than one task a second while the queue grows by
+    // hundreds. Each task carries four std::strings. That isn't slowness: it's
+    // the GAME SERVER's process climbing in memory until it dies, because of a
+    // slow database. Exactly what this task forbids.
     //
-    // Os números, e por que estes:
-    //   4.096 tarefas × ~200 B ≈ 800 KB. Teto pequeno o bastante para nunca
-    //   importar num servidor de jogo e grande o bastante para segurar uma
-    //   concessão em lote de loja web inteira sem recusar nada. Acima disso já
-    //   não é rajada: a 2 s por escrita, 4.096 pendências levam mais de duas
-    //   horas para drenar, e o que chegasse depois estaria perdido de todo
-    //   jeito — melhor recusar na hora e DIZER, que é o que Conceder faz.
+    // The numbers, and why these ones:
+    //   4,096 tasks × ~200 B ≈ 800 KB. A cap small enough never to matter on a
+    //   game server and large enough to hold a whole web shop's bulk grant
+    //   without refusing anything. Past that it isn't a burst any more: at 2 s
+    //   per write, 4,096 pending tasks take over two hours to drain, and
+    //   whatever arrived after would be lost anyway — better to refuse now and
+    //   SAY SO, which is what Conceder does.
     //
-    //   256 `visto` dentro dos 4.096. `visto` é cosmético (deixa o admin
-    //   digitar nome em vez de número) e é o ÚNICO que chega em rajada do laço
-    //   do jogo. Separá-lo garante que uma enxurrada de `visto` nunca ocupe o
-    //   lugar de um `conceder`, que é o que vale dinheiro.
+    //   256 `visto` within the 4,096. `visto` is cosmetic (it lets the admin
+    //   type a name instead of a number) and it's the ONLY one that arrives in
+    //   bursts from the game loop. Keeping it separate guarantees a flood of
+    //   `visto` never takes the place of a `conceder`, which is the one worth
+    //   money.
     constexpr size_t FILA_TETO       = 4096;
     constexpr size_t FILA_TETO_VISTO = 256;
 
-    // ── espera crescente entre tentativas de abrir/reconectar ───────────────
+    // ── growing backoff between open/reconnect attempts ─────────────────────
     //
-    // 5 · 10 · 20 · 40 · 80 · 160 · 300 (teto), em segundos. O porquê dos dois
-    // extremos está em Armazem.h, junto do campo m_esperaSegundos.
+    // 5 · 10 · 20 · 40 · 80 · 160 · 300 (cap), in seconds. The why of both
+    // extremes is in Armazem.h, alongside the m_esperaSegundos field.
     constexpr int ESPERA_PRIMEIRA = 5;
     constexpr int ESPERA_TETO     = 300;
 
-    // Quanto Abrir() segura a thread de carga do plugin esperando a primeira
-    // abertura. O porquê do número — e os 120,5 s medidos que o motivaram —
-    // está no comentário de Armazem::Abrir, em Armazem.h.
+    // How long Abrir() holds the plugin-load thread waiting for the first
+    // open. The why of the number — and the measured 120.5 s that motivated it
+    // — is in Armazem::Abrir's comment, in Armazem.h.
     constexpr int ARRANQUE_ESPERA_MS = 15000;
 
-    // De quanto em quanto tempo o log repete que o banco está fora. Repetir é
-    // obrigatório e não é ruído: senha errada não se conserta sozinha, e o dono
-    // lê o log HORAS depois, quando o jogador reclama — a essa altura a linha
-    // do arranque está soterrada sob o log do jogo.
+    // How often the log repeats that the database is down. Repeating is
+    // mandatory and isn't noise: a wrong password doesn't fix itself, and the
+    // owner reads the log HOURS later, when a player complains — by which point
+    // the startup line is buried under the game's own log.
     constexpr int64_t AVISO_A_CADA = 300;
 
-    // Casamento de nó. Devolve o peso do casamento, ou -1 se não casa.
+    // Node matching. Returns the match's weight, or -1 if it doesn't match.
     //
-    //   exato       "vip.kit.diario"  contra "vip.kit.diario"  -> len+1
-    //   curinga     "vip.kit.*"       contra "vip.kit.diario"  -> 8 (prefixo)
-    //   tudo        "*"               contra qualquer coisa    -> 0
+    //   exact       "vip.kit.diario"  against "vip.kit.diario"  -> len+1
+    //   wildcard    "vip.kit.*"       against "vip.kit.diario"  -> 8 (prefix)
+    //   everything  "*"               against anything          -> 0
     //
-    // O peso é o comprimento do que casou, e o exato ganha +1 para vencer
-    // sempre um curinga do mesmo comprimento. É o que faz "vip.*" permitir e
-    // "-vip.teleporte" negar só o teleporte, sem ordem de declaração importar.
+    // The weight is the length of what matched, and an exact match gets +1 so
+    // it always beats a wildcard of the same length. That's what makes "vip.*"
+    // allow and "-vip.teleporte" deny only the teleport, with declaration order
+    // not mattering.
     int32_t Casa(const std::string& padrao, const char* no, bool& curinga)
     {
         curinga = false;
         if (padrao.size() == 1 && padrao[0] == '*') { curinga = true; return 0; }
         if (padrao.size() >= 2 && padrao[padrao.size() - 1] == '*')
         {
-            // aceita "vip.*" e também "vip*"
+            // accepts "vip.*" and also "vip*"
             const size_t pref = padrao.size() - 1;
             if (std::strncmp(padrao.c_str(), no, pref) != 0) return -1;
             curinga = true;
@@ -237,23 +241,24 @@ namespace
 }
 
 // ============================================================================
-//  Tabela — hash sem alocação, para a consulta do laço do jogo
+//  Tabela — a hash with no allocation, for the game loop's lookup
 // ============================================================================
 uint64_t Tabela::Hash(const char* s)
 {
-    // FNV-1a de 64 bits. Escolhido por ser trivial de auditar e não ter estado.
+    // 64-bit FNV-1a. Chosen for being trivial to audit and having no state.
     uint64_t h = 1469598103934665603ULL;
-    // ── o laço TEM teto ─────────────────────────────────────────────────────
+    // ── the loop HAS a cap ──────────────────────────────────────────────────
     //
-    // Era `while (*s)`, sem limite. Chave sem terminador levava este laço para
-    // fora do mapa, na thread do jogo, fora da guarda SEH do loader — derrubava
-    // o processo, não só o plugin. Ver ComprimentoLimitado, em Armazem.h.
+    // It used to be `while (*s)`, unbounded. A key with no terminator carried
+    // this loop off the map, on the game's thread, outside the loader's SEH
+    // guard — it killed the process, not just the plugin. See
+    // ComprimentoLimitado, in Armazem.h.
     //
-    // MAX_NO é o maior dos três tetos da ABI (id 64, grupo 64, nó 128), e esta
-    // Tabela indexa os três. Nenhuma chave GUARDADA passa de MAX_ID (Inserir
-    // recusa o que não cabe em Item::id), então parar aqui não muda o resultado
-    // de consulta nenhuma: chave maior que isso simplesmente não existe na
-    // tabela e continua devolvendo "não achei".
+    // MAX_NO is the largest of the ABI's three caps (id 64, group 64, node
+    // 128), and this Tabela indexes all three. No STORED key exceeds MAX_ID
+    // (Inserir refuses what doesn't fit in Item::id), so stopping here changes
+    // no lookup's result: a key longer than that simply isn't in the table and
+    // still comes back as "not found".
     for (int i = 0; i < MAX_NO && s[i]; ++i)
     { h ^= static_cast<unsigned char>(s[i]); h *= 1099511628211ULL; }
     return h;
@@ -263,7 +268,7 @@ void Tabela::Reservar(size_t n)
 {
     itens.clear();
     itens.reserve(n);
-    // Fator de carga máximo de 50%: sondagem linear degrada rápido acima disso.
+    // A maximum load factor of 50%: linear probing degrades fast above that.
     size_t cap = 16;
     while (cap < n * 2) cap <<= 1;
     balde.assign(cap, -1);
@@ -272,21 +277,22 @@ void Tabela::Reservar(size_t n)
 bool Tabela::Inserir(const char* chave, int32_t valor)
 {
     if (!chave) return false;
-    // Era `std::strlen(chave)`, que caminha até o '\0' onde quer que ele esteja.
-    // Aqui o teto é MAX_ID porque Item::id mede MAX_ID: uma chave maior seria
-    // recusada logo abaixo de qualquer jeito, então medir além disso só serviria
-    // para ler memória que talvez não seja nossa.
+    // It used to be `std::strlen(chave)`, which walks to the '\0' wherever it
+    // may be. Here the cap is MAX_ID because Item::id is MAX_ID: a longer key
+    // would be refused just below anyway, so measuring past that would only
+    // serve to read memory that may not be ours.
     const int lenLim = ComprimentoLimitado(chave, MAX_ID);
     if (lenLim < 0) return false;
     const size_t len = static_cast<size_t>(lenLim);
-    // Chave que não cabe é RECUSADA, nunca truncada. Truncar faria dois
-    // jogadores diferentes virarem o mesmo jogador — um deles herdaria o VIP do
-    // outro, em silêncio. Recusar é feio e visível; truncar é bonito e errado.
+    // A key that doesn't fit is REFUSED, never truncated. Truncating would
+    // make two different players the same player — one would inherit the
+    // other's VIP, silently. Refusing is ugly and visible; truncating is tidy
+    // and wrong.
     if (len == 0 || len >= static_cast<size_t>(MAX_ID)) return false;
     if (balde.empty()) Reservar(16);
     if (itens.size() * 2 >= balde.size())
     {
-        // rehash: guarda os itens e remonta
+        // rehash: keep the items and rebuild
         std::vector<Item> velhos = std::move(itens);
         size_t cap = balde.size() * 2;
         balde.assign(cap, -1);
@@ -346,7 +352,7 @@ const JogadorResolvido* Instantaneo::Achar(const char* id) const
 }
 
 // ============================================================================
-//  ciclo de vida
+//  lifecycle
 // ============================================================================
 Armazem::~Armazem() { Fechar(); }
 
@@ -361,25 +367,26 @@ void Armazem::Registrar(const char* fmt, ...) const
 }
 
 // ============================================================================
-//  AbrirBanco — do config.json ao primeiro instantâneo publicado
+//  AbrirBanco — from config.json to the first published snapshot
 //
-//  Chamada pelo arranque E pela thread escritora (retentativa). NUNCA pelo laço
-//  do jogo: com MySQL isto espera rede.
+//  Called by startup AND by the writer thread (a retry). NEVER by the game
+//  loop: with MySQL this waits on the network.
 //
-//  RELÊ O CONFIG A CADA CHAMADA, de propósito (INV-ARMAZEM-003). É o que faz o
-//  dono corrigir a senha, a porta, o nome do banco ou o "Database" no arquivo e
-//  o conserto valer sozinho — sem reiniciar o servidor de jogo, que custa 6 a 9
-//  minutos com ninguém conseguindo entrar.
+//  IT RE-READS THE CONFIG ON EVERY CALL, on purpose (INV-ARMAZEM-003). It's
+//  what lets the owner fix the password, the port, the database name or the
+//  "Database" line in the file and have the fix take effect on its own —
+//  without restarting the game server, which costs 6 to 9 minutes with nobody
+//  able to connect.
 // ============================================================================
 bool Armazem::AbrirBanco()
 {
-    // ── 1. quem é o banco: o config.json decide ─────────────────────────────
+    // ── 1. which database it is: config.json decides ────────────────────────
     //
-    // Isto vem ANTES de abrir qualquer coisa, e é a única ordem possível: o
-    // arquivo diz para onde ir. Config quebrada aqui é RECUSA, não "cai no
-    // padrão" — ver LerConfigBanco em Banco.cpp para o porquê (quem escreve
-    // "mysqll" e cai no sqlite calado grava os VIPs num arquivo que ninguém
-    // olha).
+    // This comes BEFORE opening anything, and it's the only possible order: the
+    // file says where to go. A broken config here is a REFUSAL, not "fall back
+    // to the default" — see LerConfigBanco in Banco.cpp for why (whoever writes
+    // "mysqll" and quietly falls through to sqlite writes the VIPs into a file
+    // nobody looks at).
     ConfigBanco cfg;
     std::string erro;
     if (!LerConfigBanco(m_caminhoJson.c_str(), m_caminhoDb.c_str(), cfg, erro))
@@ -395,24 +402,25 @@ bool Armazem::AbrirBanco()
         Registrar("[permission] banco: sqlite em %s%s", cfg.caminhoSqlite.c_str(),
                   (cfg.caminhoSqlite == m_caminhoDb) ? "" : "  (via DbPathOverride)");
 
-    // ── o banco entra no lugar ANTES de tentar abrir, e isso é deliberado ────
+    // ── the database is installed BEFORE trying to open, and that's deliberate
     //
-    // O único jeito de Fechar() conseguir interromper uma abertura em curso é
-    // ela estar alcançável. Sem isto, um desligamento pedido durante o
-    // arranque — que é justamente quando ele demora — esperaria a abertura
-    // inteira: 120 s medidos contra um MySQL a 2 s por comando.
+    // The only way Fechar() can interrupt an open in progress is for it to be
+    // reachable. Without this, a shutdown requested during startup — which is
+    // exactly when startup is slow — would wait out the whole open: 120 s
+    // measured against a MySQL at 2 s per command.
     //
-    // O preço é que m_banco passa a existir num estado "criado e não aberto".
-    // Ele é pago aqui e só aqui: TODO caminho de falha abaixo devolve
-    // m_banco a nullptr, então quem lê m_banco continua podendo entender
-    // "existe" como "já abriu alguma vez".
+    // The price is that m_banco now exists in a "created and not opened" state.
+    // It's paid here and only here: EVERY failure path below returns m_banco to
+    // nullptr, so anyone reading m_banco can still take "exists" to mean "has
+    // opened at least once".
     { std::lock_guard<std::mutex> g(m_mtxBanco); m_banco = std::move(novo); }
 
     if (!m_banco->Abrir())
     {
-        // A mensagem do meio já vem pronta e em português (porta fechada, nome
-        // que não resolve, senha errada, banco inexistente). Repassar inteira é
-        // o certo: encurtar aqui seria jogar fora a única informação acionável.
+        // The medium's message already comes fully formed (closed port, a name
+        // that doesn't resolve, wrong password, missing database). Passing it
+        // through whole is right: shortening it here would throw away the only
+        // actionable information.
         Registrar("[permission] nao consegui abrir o banco: %s", m_banco->Erro());
         { std::lock_guard<std::mutex> g(m_mtxBanco); m_banco.reset(); }
         return false;
@@ -427,10 +435,10 @@ bool Armazem::AbrirBanco()
 
     if (!m_caminhoJson.empty() && !AplicarConfig(m_caminhoJson.c_str()))
     {
-        // Config inválida NÃO derruba o Permission: o banco já tem os grupos da
-        // última vez que o JSON estava bom. Melhor rodar com a configuração de
-        // ontem e gritar no log do que ficar sem permissão nenhuma porque
-        // alguém esqueceu uma vírgula às 3 da manhã.
+        // An invalid config does NOT take Permission down: the database still
+        // has the groups from the last time the JSON was good. Better to run
+        // with yesterday's configuration and shout in the log than to have no
+        // permissions at all because somebody missed a comma at 3am.
         Registrar("[permission] permission.json rejeitado; seguindo com o que ja "
                   "estava no banco. Nada foi perdido.");
     }
@@ -447,24 +455,24 @@ bool Armazem::AbrirBanco()
 bool Armazem::Abrir(const char* caminhoDb, const char* caminhoJson, FnLog log)
 {
     m_log = log;
-    // A guarda passou a ser a THREAD, e não o banco: agora existe um estado
-    // legítimo em que o Armazém está de pé e o banco ainda não abriu, e
-    // conferir m_banco aqui deixaria Abrir ser chamado duas vezes justamente
-    // nesse estado — duas threads escritoras sobre a mesma fila.
+    // The guard became the THREAD, not the database: there's now a legitimate
+    // state where Armazem is standing and the database hasn't opened yet, and
+    // checking m_banco here would let Abrir be called twice in exactly that
+    // state — two writer threads over the same queue.
     if (m_thread.joinable()) { Registrar("[permission] Abrir chamado duas vezes; ignorado"); return false; }
     if (!caminhoDb || !*caminhoDb) { Registrar("[permission] caminho do banco vazio"); return false; }
 
     m_caminhoDb   = caminhoDb;
     m_caminhoJson = caminhoJson ? caminhoJson : "";
 
-    // ── quem abre o banco é a THREAD, e Abrir só espera por ela — com teto ───
+    // ── the THREAD opens the database, and Abrir only waits for it — capped ─
     //
-    // Ver o comentário de Abrir em Armazem.h para o número medido (120,5 s de
-    // arranque contra um MySQL a 2 s por comando) e para o porquê dos 15 s.
+    // See Abrir's comment in Armazem.h for the measured number (120.5 s of
+    // startup against a MySQL at 2 s per command) and for why 15 s.
     //
-    // No caso normal — sqlite local, ou MySQL saudável — isto termina em
-    // dezenas de milissegundos e o comportamento é idêntico ao de antes:
-    // Abrir() volta com o Permission já de pé.
+    // In the normal case — local sqlite, or a healthy MySQL — this finishes in
+    // tens of milliseconds and the behaviour is identical to before: Abrir()
+    // returns with Permission already up.
     m_rodando.store(true, std::memory_order_release);
     m_thread = std::thread(&Armazem::Trabalhar, this);
 
@@ -476,8 +484,9 @@ bool Armazem::Abrir(const char* caminhoDb, const char* caminhoJson, FnLog log)
 
     if (!m_arranqueFeito.load(std::memory_order_acquire))
     {
-        // Nem falhou nem subiu: está demorando. Dizer isso é o que separa "o
-        // servidor travou" de "o banco dele é lento e o plugin avisou".
+        // Neither failed nor came up: it's taking a while. Saying so is what
+        // separates "the server froze" from "their database is slow and the
+        // plugin said so".
         Registrar("[permission] o banco esta demorando mais de %d s para abrir. NAO vou "
                   "segurar o arranque do servidor por causa disso: sigo abrindo em "
                   "segundo plano e o Permission entra sozinho quando terminar. Ate la "
@@ -485,11 +494,12 @@ bool Armazem::Abrir(const char* caminhoDb, const char* caminhoJson, FnLog log)
         return true;
     }
 
-    // O aviso em moldura do banco que não abriu NÃO sai daqui: sai de
-    // CuidarDaConexao, na thread que descobriu a falha. Se saísse daqui, um
-    // banco que demora mais que ARRANQUE_ESPERA_MS para falhar (DNS lento, por
-    // exemplo) falharia sem nunca imprimir o aviso — e a mensagem que o dono
-    // não encontra é a mensagem que não existe.
+    // The boxed warning about a database that didn't open does NOT come from
+    // here: it comes from CuidarDaConexao, on the thread that found the
+    // failure. If it came from here, a database that takes longer than
+    // ARRANQUE_ESPERA_MS to fail (slow DNS, say) would fail without ever
+    // printing the warning. A message the owner can't find is a message that
+    // doesn't exist.
     return true;
 }
 
@@ -504,26 +514,27 @@ void Armazem::Fechar()
         }
         m_cvFila.notify_all();
 
-        // ── interromper ANTES de esperar ────────────────────────────────────
+        // ── interrupt BEFORE waiting ───────────────────────────────────────
         //
-        // A thread escritora pode estar dentro de um recv() contra um MySQL que
-        // aceitou a conexão e emudeceu. Sem isto, o join espera o prazo do
-        // banco — msOperar POR COMANDO, e uma reconstrução são 7 consultas: até
-        // ~70 s de servidor pendurado no desligamento, com os prazos padrão. Aí
-        // o dono faz o que qualquer um faria e mata o processo — e matar o
-        // Conan no desligamento perde o save do mundo. Um problema do banco não
-        // pode terminar em save perdido.
+        // The writer thread can be sitting inside a recv() against a MySQL that
+        // accepted the connection and then went silent. Without this, the join
+        // waits out the database's timeout — msOperar PER COMMAND, and a
+        // rebuild is 7 queries: up to ~70 s of server hanging at shutdown with
+        // the default timeouts. At that point
+        // the owner does what anyone would and kills the process — and killing
+        // Conan during shutdown loses the world save. A database problem must
+        // not end in a lost save.
         //
-        // Interromper() é seguro de outra thread por contrato (Banco.h) e é
-        // definitivo: daqui em diante este banco não serve mais para nada, que
-        // é exatamente o que se quer de um processo que está morrendo.
+        // Interromper() is safe from another thread by contract (Banco.h) and
+        // it's final: from here on this database serves no purpose at all,
+        // which is exactly what you want from a process that's dying.
         { std::lock_guard<std::mutex> g(m_mtxBanco); if (m_banco) m_banco->Interromper(); }
 
         if (m_thread.joinable()) m_thread.join();
     }
     m_bancoServe.store(false, std::memory_order_release);
-    // Só agora se libera instantâneo: a thread escritora já parou, e no jogo o
-    // Fechar acontece no descarregamento do processo.
+    // Only now are snapshots freed: the writer thread has stopped, and in the
+    // game Fechar happens as the process unloads.
     const Instantaneo* a = m_atual.exchange(nullptr, std::memory_order_acq_rel);
     delete a;
     for (const Instantaneo* v : m_aposentados) delete v;
@@ -533,11 +544,11 @@ void Armazem::Fechar()
 
 bool Armazem::AplicarEsquema()
 {
-    // Um comando por vez, nos dois meios. O SQLite aceitaria o esquema inteiro
-    // num exec só; o MySQL desta casa não, porque CLIENT_MULTI_STATEMENTS está
-    // desligado de propósito (MySqlCliente.h). Rodar um por um nos dois faz o
-    // caminho ser o mesmo caminho — e a falha aponta QUAL comando falhou, em
-    // vez de "o esquema falhou".
+    // One command at a time, on both media. SQLite would take the whole schema
+    // in a single exec; this house's MySQL wouldn't, because
+    // CLIENT_MULTI_STATEMENTS is off on purpose (MySqlCliente.h). Running them
+    // one by one on both makes the path the same path — and a failure names
+    // WHICH command failed, instead of "the schema failed".
     for (const char* const* p = m_banco->S().esquema; *p; ++p)
         if (!m_banco->Executar(*p))
         {
@@ -554,9 +565,9 @@ bool Armazem::AplicarEsquema()
         { Registrar("[permission] meta: %s", m_banco->Erro()); return false; }
     }
 
-    // Versão de esquema MAIOR que a que este binário conhece: recusar. Rodar
-    // por cima de um banco de uma versão futura é o caminho mais curto para
-    // apagar dado que não se entende.
+    // A schema version HIGHER than the one this binary knows: refuse. Running
+    // over a database from a future version is the shortest path to deleting
+    // data you don't understand.
     int versao = 0;
     if (!m_banco->Consultar(m_banco->S().meta_ler_versao,
         [](const ILinha& l, void* p) { *static_cast<int*>(p) = static_cast<int>(l.Inteiro(0)); },
@@ -574,26 +585,28 @@ bool Armazem::AplicarEsquema()
 }
 
 // ============================================================================
-//  configuração: permission.json -> banco
+//  configuration: permission.json -> database
 //
-//  Regra que governa este trecho: o JSON MANDA na FORMA (quais grupos existem,
-//  o que cada um pode, quem herda de quem) e NUNCA na POSSE (quem é VIP). Posse
-//  mora só no banco, e nada aqui apaga posse.
+//  The rule governing this stretch: the JSON RULES the SHAPE (which groups
+//  exist, what each one can do, who inherits from whom) and NEVER the
+//  OWNERSHIP (who is VIP). Ownership lives only in the database, and nothing
+//  here deletes ownership.
 //
-//  Isso é o que faz "renomear sem perder o que está gravado" funcionar: mexer
-//  no JSON reescreve permissões de grupo à vontade; jogador_grupo não é tocado.
+//  That's what makes "rename without losing what's stored" work: touching the
+//  JSON rewrites group permissions freely; jogador_grupo is never touched.
 //
-//  O QUE MUDOU COM OS DOIS BANCOS
-//  ------------------------------
-//  Antes isto era um punhado de SQL grande, com json_each cruzando direto com
-//  as tabelas reais. O json1 continua lendo o arquivo (agora num SQLite de
-//  memória, ver Banco.cpp), mas a GRAVAÇÃO passou a ser comando a comando,
-//  parametrizado — que é o único jeito de o mesmo código servir aos dois.
+//  WHAT CHANGED WITH TWO DATABASES
+//  -------------------------------
+//  This used to be a handful of big SQL statements, with json_each joining
+//  straight against the real tables. json1 still reads the file (now in an
+//  in-memory SQLite, see Banco.cpp), but the WRITING became command by command,
+//  parameterised — which is the only way the same code serves both.
 //
-//  A ORDEM É A MESMA, e ela não é arbitrária: renomes ANTES de qualquer upsert.
-//  Se o upsert rodasse primeiro, ele criaria um grupo NOVO com a chave nova, e
-//  o antigo — com todos os VIPs dentro — ficaria órfão. O sintoma seria
-//  exatamente o que o dono pediu para não acontecer: renomeei e perdi os dados.
+//  THE ORDER IS THE SAME, and it isn't arbitrary: renames BEFORE any upsert.
+//  If the upsert ran first, it would create a NEW group under the new key, and
+//  the old one — with every VIP inside it — would be orphaned. The symptom
+//  would be exactly what the owner asked never to happen: I renamed it and lost
+//  the data.
 // ============================================================================
 bool Armazem::AplicarConfig(const char* caminhoJson)
 {
@@ -612,8 +625,8 @@ bool Armazem::AplicarConfig(const char* caminhoJson)
         return true;      // ausência não é erro: o banco já pode estar pronto
     }
 
-    // Tudo ou nada. Config aplicada pela metade é o pior estado possível: o
-    // grupo existe e as permissões dele não.
+    // All or nothing. A half-applied config is the worst possible state: the
+    // group exists and its permissions don't.
     if (!m_banco->Iniciar())
     { Registrar("[permission] nao consegui abrir transacao para a config: %s",
                 m_banco->Erro()); return false; }
@@ -625,14 +638,14 @@ bool Armazem::AplicarConfig(const char* caminhoJson)
         bom = false;
     };
 
-    // ── 1. renomes explícitos ("era") ───────────────────────────────────────
+    // ── 1. explicit renames ("era") ─────────────────────────────────────────
     for (const ConfigGrupo& g : cfg.grupos)
     {
         if (!bom) break;
         if (g.era.empty() || g.era == g.chave) continue;
 
-        // Guarda a chave velha como APELIDO antes de trocar: é o que mantém
-        // certo o plugin de terceiro que foi compilado perguntando por "vip".
+        // Store the old key as an ALIAS before swapping: it's what keeps the
+        // third-party plugin compiled asking for "vip" correct.
         {
             std::unique_ptr<IComando> c = m_banco->Preparar(m_banco->S().grupo_apelido_do_renome);
             if (!c) { falhar("preparar apelido do renome"); break; }
@@ -652,7 +665,7 @@ bool Armazem::AplicarConfig(const char* caminhoJson)
         }
     }
 
-    // ── 2. os grupos ────────────────────────────────────────────────────────
+    // ── 2. the groups ───────────────────────────────────────────────────────
     if (bom)
         for (const ConfigGrupo& g : cfg.grupos)
         {
@@ -664,19 +677,19 @@ bool Armazem::AplicarConfig(const char* caminhoJson)
             { falhar("gravar grupos"); break; }
         }
 
-    // ── 3. herança e permissões: o JSON é a verdade, então reescreve ────────
+    // ── 3. inheritance and permissions: the JSON is the truth, so rewrite ───
     //
-    // Apagar-e-regravar SÓ estas três tabelas. jogador_grupo e
-    // jogador_permissao ficam de fora — é ali que mora a posse.
+    // Delete-and-rewrite ONLY these three tables. jogador_grupo and
+    // jogador_permissao stay out — that's where ownership lives.
     if (bom && !m_banco->Executar(m_banco->S().grupo_herda_limpar))       falhar("limpar heranca");
     if (bom)
     {
-        // Deduplicar aqui, e não com INSERT OR IGNORE / INSERT IGNORE: o
-        // IGNORE do MySQL também engole violação de chave estrangeira e
-        // truncamento de dado, e uma tabela recém-esvaziada só recebe
-        // duplicata se o próprio permission.json repetir a linha. Repetição no
-        // arquivo é erro de edição inofensivo — some, com log — e erro de
-        // verdade continua aparecendo.
+        // Deduplicate here, and not with INSERT OR IGNORE / INSERT IGNORE:
+        // MySQL's IGNORE also swallows foreign-key violations and data
+        // truncation, and a freshly emptied table only receives a duplicate if
+        // permission.json itself repeats the line. A repetition in the file is
+        // a harmless editing mistake — it goes away, with a log line — and a
+        // real error still shows up.
         std::vector<std::pair<std::string,std::string>> vistos;
         for (const ConfigGrupo& g : cfg.grupos)
         {
@@ -699,9 +712,10 @@ bool Armazem::AplicarConfig(const char* caminhoJson)
                 if (!c->LigarTexto(1, g.chave.c_str()) || !c->LigarTexto(2, pai.c_str())
                     || !c->Executar())
                 { falhar("gravar heranca"); break; }
-                // 0 linhas = o pai não existe (ou é o próprio filho). Antes isto
-                // era silencioso, e "herda": ["deafult"] escrito errado virava um
-                // grupo sem herança nenhuma sem uma palavra no log.
+                // 0 rows = the parent doesn't exist (or is the child itself).
+                // This used to be silent, and a mistyped "herda": ["deafult"]
+                // became a group with no inheritance at all without a word in
+                // the log.
                 if (c->Mudancas() == 0)
                     Registrar("[permission] config: '%s' diz herdar de '%s', mas esse "
                               "grupo nao existe no permission.json. A heranca foi "
@@ -726,10 +740,11 @@ bool Armazem::AplicarConfig(const char* caminhoJson)
                 if (repetido)
                 {
                     // Isto pega o caso que mais confunde: ["vip.a", "-vip.a"] no
-                    // mesmo grupo. A chave da tabela é (grupo,no) e `nega` não
-                    // entra nela, então só um dos dois pode existir. O primeiro
-                    // ganha — como já ganhava com INSERT OR IGNORE — mas agora
-                    // o dono fica sabendo, em vez de ver a negação sumir.
+                    // same group. The table's key is (group,node) and `nega`
+                    // isn't part of it, so only one of the two can exist. The
+                    // first wins — as it already did with INSERT OR IGNORE —
+                    // but now the owner is told, instead of watching the
+                    // denial disappear.
                     Registrar("[permission] config: o grupo '%s' declara '%s' duas "
                               "vezes (uma delas negada?). Valeu a primeira; a "
                               "segunda foi ignorada.", g.chave.c_str(), pr.first.c_str());
@@ -771,11 +786,11 @@ bool Armazem::AplicarConfig(const char* caminhoJson)
         }
     }
 
-    // ── 4. um grupo padrão tem de existir ───────────────────────────────────
+    // ── 4. a default group has to exist ─────────────────────────────────────
     //
-    // Sem grupo padrão, todo jogador que nunca foi tocado por um admin é um
-    // jogador sem NADA — e o servidor inteiro parece quebrado sem uma
-    // mensagem de erro. Falhar alto aqui é muito melhor.
+    // With no default group, every player an admin never touched is a player
+    // with NOTHING — and the whole server looks broken without a single error
+    // message. Failing loud here is far better.
     if (bom)
     {
         int n = 0;
@@ -792,30 +807,33 @@ bool Armazem::AplicarConfig(const char* caminhoJson)
         }
     }
 
-    // ── COMMIT que falha PRECISA de ROLLBACK ────────────────────────────────
+    // ── a COMMIT that fails NEEDS a ROLLBACK ────────────────────────────────
     //
-    // Achado na revisão da própria alteração (§19), não rodando. No sqlite um
-    // COMMIT que falha — disco cheio, banco travado por outro processo — NÃO
-    // fecha a transação: ela fica ABERTA. O próximo Iniciar() morre então com
-    // "cannot start a transaction within a transaction", e a partir dali TODA
-    // escrita do plugin falha por causa de um erro que aconteceu uma vez,
-    // minutos antes. O sintoma não tem nenhuma relação visível com a causa.
+    // Found while reviewing the change itself (§19), not by running it. On
+    // sqlite, a COMMIT that fails — a full disk, a database locked by another
+    // process — does NOT close the transaction: it stays OPEN. The next
+    // Iniciar() then dies with "cannot start a transaction within a
+    // transaction", and from there EVERY write the plugin makes fails because
+    // of an error that happened once, minutes earlier. The symptom bears no
+    // visible relation to the cause.
     if (bom && !m_banco->Confirmar())
     {
         Registrar("[permission] COMMIT da config falhou: %s", m_banco->Erro());
         bom = false;
         // ── DESFAZER É OBRIGATÓRIO AQUI ─────────────────────────────────────
         //
-        // COMMIT que falha NÃO fecha a transação: ela continua aberta. E com uma
-        // transação aberta pendurada, TODA escrita seguinte falha — conceder VIP,
-        // revogar, criar grupo. O log culparia a operação da vez, e a causa real
-        // (um COMMIT que falhou minutos antes) não apareceria em lugar nenhum.
+        // A COMMIT that fails does NOT close the transaction: it stays open.
+        // And with an open transaction hanging around, EVERY subsequent write
+        // fails — granting VIP, revoking, creating a group. The log would blame
+        // whichever operation happened to be running, and the real cause (a
+        // COMMIT that failed minutes earlier) would appear nowhere.
         //
-        // Cenário concreto: disco enche por um instante, o COMMIT da config
-        // falha, o disco libera — e o Permission fica inutilizável até o
-        // servidor reiniciar, dizendo "erro ao gravar" para tudo.
+        // A concrete scenario: the disk fills for a moment, the config's
+        // COMMIT fails, the disk frees up — and Permission stays unusable until
+        // the server restarts, answering "erro ao gravar" to everything.
         //
-        // ROLLBACK sobre transação já desfeita é inofensivo; deixar aberta não.
+        // A ROLLBACK over an already-undone transaction is harmless; leaving
+        // it open is not.
         m_banco->Desfazer();
     }
     if (!bom) m_banco->Desfazer();
@@ -839,11 +857,11 @@ bool Armazem::Reconstruir()
     std::unordered_map<int64_t, Grupo> grupos;
     std::unordered_map<std::string, int64_t> porChave;
 
-    // Uma leitura que falha ABORTA a reconstrução antes de qualquer publicação
-    // (INV-BANCO-003): o instantâneo anterior continua valendo. Com MySQL isto
-    // deixou de ser hipótese — a conexão pode cair no meio da terceira consulta
-    // — e o comportamento certo é servidor com permissões velhas e corretas,
-    // nunca com permissões pela metade.
+    // A read that fails ABORTS the rebuild before any publication
+    // (INV-BANCO-003): the previous snapshot stays in force. With MySQL that
+    // stopped being hypothetical — the connection can drop in the middle of the
+    // third query — and the right behaviour is a server with old, correct
+    // permissions, never with half of them.
     auto ler = [&](const char* sql, FnLinha fn, void* ctx) -> bool
     {
         if (!m_banco->Consultar(sql, fn, ctx))
@@ -870,6 +888,20 @@ bool Armazem::Reconstruir()
             (*c->g)[g.id]    = std::move(g);
         }, &cg)) return false;
 
+    // The group keys, so "does this group exist?" can be answered without
+    // going to the database. `porChave` was just built above and holds exactly
+    // that.
+    novo->idxGrupo.Reservar(porChave.size());
+    for (const auto& par : porChave)
+    {
+        // A key that doesn't fit is a key no lookup would find anyway;
+        // ignoring it silently here would create an invisible group, so the log
+        // says so.
+        if (!novo->idxGrupo.Inserir(par.first.c_str(), int32_t(par.second)) && m_log)
+            m_log("[permission] chave de grupo longa demais para o indice; "
+                  "'conceder' nesse grupo vai recusar");
+    }
+
     if (!ler(m_banco->S().ler_heranca,
         [](const ILinha& l, void* p)
         {
@@ -888,7 +920,7 @@ bool Armazem::Reconstruir()
             if (t) it->second.nos.emplace_back(t, l.Inteiro(2) != 0);
         }, &grupos)) return false;
 
-    // ── apelidos, montados direto na tabela sem alocação de consulta ─────────
+    // ── aliases, built straight into the table with no lookup allocation ────
     struct CtxA { Tabela* idx; std::vector<std::string>* para; FnLog log; };
     auto lerApelidos = [&](const char* sql, Tabela& idx, std::vector<std::string>& para) -> bool
     {
@@ -912,14 +944,14 @@ bool Armazem::Reconstruir()
     if (!lerApelidos(m_banco->S().ler_apelidos_de_no,
                      novo->idxApelidoNo, novo->apelidoNoPara)) return false;
 
-    // ── achatar a herança de um grupo ───────────────────────────────────────
+    // ── flattening a group's inheritance ────────────────────────────────────
     //
-    // Feito UMA vez, aqui, fora do laço. É por isso que a leitura no jogo é um
-    // hash e não uma travessia de grafo. O guarda de profundidade e o conjunto
-    // de visitados existem porque herança circular ("a herda de b, b herda de
-    // a") é um erro de digitação normal num arquivo editado à mão — e num
-    // grafo sem guarda isso é recursão infinita dentro do processo do
-    // servidor, ou seja, servidor no chão por causa de uma vírgula.
+    // Done ONCE, here, outside the loop. That's why the in-game read is a hash
+    // lookup and not a graph traversal. The depth guard and the visited set
+    // exist because circular inheritance ("a inherits from b, b inherits from
+    // a") is an ordinary typo in a hand-edited file — and in an unguarded graph
+    // that's infinite recursion inside the server's process, meaning a server
+    // on the floor because of one comma.
     auto achatar = [&](int64_t raizId, bool individualNao, int64_t expiraDoVinculo,
                        std::vector<NoResolvido>& saida)
     {
@@ -950,7 +982,7 @@ bool Armazem::Reconstruir()
                       "cortada no limite. Confira 'herda' no permission.json.");
     };
 
-    // ── o jogador que ainda não existe no banco ─────────────────────────────
+    // ── the player who isn't in the database yet ────────────────────────────
     for (const auto& kv : grupos)
         if (kv.second.padrao)
         {
@@ -958,25 +990,26 @@ bool Armazem::Reconstruir()
             novo->padrao.grupos.push_back(GrupoDoJogador{kv.second.chave, 0});
         }
 
-    // ── os jogadores ────────────────────────────────────────────────────────
+    // ── the players ─────────────────────────────────────────────────────────
     //
-    // Montados num mapa (alocar aqui é livre: isto roda na thread escritora,
-    // não no laço do jogo) e depois ACHATADOS em vetor + Tabela, que é o que a
-    // consulta usa.
+    // Built into a map (allocating here is free: this runs on the writer
+    // thread, not in the game loop) and then FLATTENED into a vector + Tabela,
+    // which is what lookups use.
     std::unordered_map<std::string, JogadorResolvido> emMontagem;
     {
-        // ── por que as linhas são COLETADAS antes de processadas ─────────────
+        // ── why the rows are COLLECTED before being processed ────────────────
         //
-        // `achatar` é uma lambda com capturas (precisa do mapa `grupos`), e a
-        // interface do banco recebe ponteiro de função puro — de propósito: um
-        // std::function no caminho de leitura seria alocação escondida numa
-        // fronteira que os dois meios têm de cumprir igual.
+        // `achatar` is a lambda with captures (it needs the `grupos` map), and
+        // the database interface takes a plain function pointer — on purpose: a
+        // std::function on the read path would be a hidden allocation at a
+        // boundary both media have to honour identically.
         //
-        // Coletar primeiro e processar depois custa um vetor temporário e
-        // resolve isso sem tocar na lógica. Alocar AQUI é livre: isto roda na
-        // thread escritora, nunca no laço do jogo. E tem um efeito colateral
-        // bom: a conexão fica ocupada só o tempo de ler, o que importa quando
-        // do outro lado há um MySQL numa rede lenta.
+        // Collecting first and processing afterwards costs a temporary vector
+        // and solves that without touching the logic. Allocating HERE is free:
+        // this runs on the writer thread, never in the game loop. And it has a
+        // good side effect: the connection is busy only for as long as the read
+        // takes, which matters when there's a MySQL on a slow network at the
+        // other end.
         struct Vinculo { std::string jogador, chave; int64_t gid, expira; };
         std::vector<Vinculo> linhas;
         if (!ler(m_banco->S().ler_jogador_grupo,
@@ -997,7 +1030,7 @@ bool Armazem::Reconstruir()
         }
     }
 
-    // exceções individuais: ganham de qualquer grupo, por construção do peso
+    // individual exceptions: they beat any group, by how the weight is built
     {
         struct Ctx { std::unordered_map<std::string, JogadorResolvido>* m; };
         Ctx c{ &emMontagem };
@@ -1017,10 +1050,11 @@ bool Armazem::Reconstruir()
             }, &c)) return false;
     }
 
-    // Todo jogador conhecido também tem os direitos do grupo padrão. Sem isto,
-    // dar VIP a alguém REMOVERIA dele o que o grupo padrão dava — porque ele
-    // deixaria de cair no caminho do "desconhecido". Defeito clássico e
-    // silencioso: o admin promove o jogador e o jogador perde funções.
+    // Every known player also has the default group's rights. Without this,
+    // granting somebody VIP would REMOVE from them whatever the default group
+    // gave — because they'd stop falling down the "unknown" path. A classic
+    // silent defect: the admin promotes the player and the player loses
+    // abilities.
     for (auto& kv : emMontagem)
     {
         bool temPadrao = false;
@@ -1042,7 +1076,7 @@ bool Armazem::Reconstruir()
         }
     }
 
-    // ── achatar em vetor + Tabela: é esta forma que a consulta lê ────────────
+    // ── flatten into vector + Tabela: this is the shape lookups read ────────
     novo->jogadores.reserve(emMontagem.size());
     novo->idxJogador.Reservar(emMontagem.size() + 1);
     int recusados = 0;
@@ -1075,26 +1109,28 @@ void Armazem::Publicar(Instantaneo* novo)
 {
     const Instantaneo* velho = m_atual.exchange(novo, std::memory_order_acq_rel);
 
-    // ── por que NÃO se libera o velho agora ─────────────────────────────────
+    // ── why the old one is NOT freed right now ──────────────────────────────
     //
-    // Um leitor do laço do jogo pode ter pegado o ponteiro velho um
-    // nanossegundo antes desta troca e ainda estar dentro dele. `delete` aqui
-    // seria use-after-free dentro do processo do servidor — o defeito que este
-    // projeto proíbe acima de todos, porque não dá erro: dá queda, mais tarde,
-    // em outro lugar, sem rastro.
+    // A reader in the game loop may have grabbed the old pointer a nanosecond
+    // before this swap and still be inside it. A `delete` here would be a
+    // use-after-free inside the server's process — the defect this project
+    // forbids above all others, because it doesn't give you an error: it gives
+    // you a crash, later, somewhere else, with no trace.
     //
-    // A troca já aconteceu acima: daqui para a frente, TODO leitor novo enxerga
-    // o instantâneo novo. Então se o contador de leitores estiver em zero neste
-    // instante, nenhum leitor pode estar segurando um aposentado — e liberar é
-    // certeza, não estimativa.
+    // The swap already happened above: from here on, EVERY new reader sees the
+    // new snapshot. So if the reader counter is zero at this instant, no reader
+    // can be holding a retired one — and freeing is certainty, not an
+    // estimate.
     //
-    // A versão anterior contava PUBLICAÇÕES em vez de leitores, apostando que
-    // "duas trocas levam segundos". Levam ~4 ms. O servidor caía. Ver o
-    // comentário de Armazem::Leitura, em Armazem.h, para a medição e o rastro.
+    // The previous version counted PUBLICATIONS instead of readers, betting
+    // that "two swaps take seconds". They take ~4 ms. The server crashed. See
+    // Armazem::Leitura's comment, in Armazem.h, for the measurement and the
+    // trace.
     //
-    // Reader-writer lock resolveria também, ao custo de o laço do jogo poder
-    // esperar por um escritor. Não é negociável: o laço não espera. O contador
-    // de leitores dá a mesma garantia sem nunca bloquear quem lê.
+    // A reader-writer lock would solve it too, at the cost of the game loop
+    // possibly waiting on a writer. That isn't negotiable: the loop doesn't
+    // wait. The reader counter gives the same guarantee without ever blocking a
+    // reader.
     if (velho) m_aposentados.push_back(velho);
 
     if (m_leitores.load(std::memory_order_acquire) == 0)
@@ -1104,10 +1140,10 @@ void Armazem::Publicar(Instantaneo* novo)
     }
     else if (m_aposentados.size() > 64)
     {
-        // Leitura presa por muito tempo com escrita em rajada. Não se libera
-        // nada — acumular memória é ruim, use-after-free é inaceitável — mas o
-        // log tem de contar, porque 64 aposentados vivos significa que alguma
-        // leitura não está terminando, e isso é um defeito em outro lugar.
+        // A read stuck for a long time with writes coming in bursts. Nothing
+        // is freed — piling up memory is bad, a use-after-free is unacceptable
+        // — but the log has to say so, because 64 live retired snapshots means
+        // some read isn't finishing, and that's a defect somewhere else.
         Registrar("[permission] ATENCAO: %zu instantaneos aposentados e %d leitor(es) "
                   "ativo(s). Nada foi liberado (de proposito). Se este numero cresce "
                   "sem parar, alguma leitura de permissao nao esta terminando.",
@@ -1119,22 +1155,23 @@ uint64_t Armazem::Geracao() const
 { const Instantaneo* a = Atual(); return a ? a->geracao : 0; }
 
 // ============================================================================
-//  leitura — o que roda no laço do jogo
+//  reading — what runs in the game loop
 // ============================================================================
 int32_t Armazem::Tem(const char* jogador, const char* no) const
 {
     const Leitura lida(*this);
     const Instantaneo* s = lida.get();
     if (!s) return NAO_SEI;
-    // Entrada da ABI: confere TERMINADOR, não só nulo/vazio. Ver
-    // ComprimentoLimitado em Armazem.h para o defeito e para o que a defesa
-    // não cobre. Depois daqui, `no` pode ser caminhado por
-    // `std::string::operator==` dentro de Casa() sem levar o processo junto.
+    // ABI input: it checks the TERMINATOR, not just null/empty. See
+    // ComprimentoLimitado in Armazem.h for the defect and for what the defence
+    // doesn't cover. Past this point, `no` can be walked by
+    // `std::string::operator==` inside Casa() without taking the process with
+    // it.
     if (ComprimentoLimitado(jogador, MAX_ID) < 0) return NAO_SEI;
     if (ComprimentoLimitado(no,      MAX_NO) < 0) return NAO_SEI;
 
-    // apelido de nó: renomear permissão sem invalidar plugin já compilado.
-    // Devolve ponteiro para dentro do instantâneo — sem cópia, sem alocação.
+    // node alias: rename a permission without invalidating a compiled plugin.
+    // Returns a pointer into the snapshot — no copy, no allocation.
     const char* alvo = s->NoAtual(no);
 
     const JogadorResolvido* achado = s->Achar(jogador);
@@ -1149,12 +1186,29 @@ int32_t Armazem::Tem(const char* jogador, const char* no) const
         bool cur = false;
         const int32_t len = Casa(n.padrao, alvo, cur);
         if (len < 0) continue;
-        // peso: individual >> comprimento do casamento >> negação desempata
+        // weight: individual >> match length >> denial breaks the tie
         const int32_t peso = (n.individual ? (1 << 24) : 0) + len * 2 + (n.nega ? 1 : 0);
         if (peso > melhorPeso) { melhorPeso = peso; melhorNega = n.nega; }
     }
     if (melhorPeso < 0) return NEGADO;      // nada casou: negado por omissão
     return melhorNega ? NEGADO : PERMITIDO;
+}
+
+// ── este grupo existe? ──────────────────────────────────────────────────────
+//
+// Queries the snapshot without touching the database: it's called from inside
+// `Conceder`, which can come from the game loop.
+//
+// It resolves the ALIAS before looking. A plugin compiled when the group was
+// called "vip" keeps saying "vip" after it becomes "patrono"; refusing there
+// would break exactly what the alias mechanism exists to protect.
+int32_t Armazem::GrupoExiste(const char* grupo) const
+{
+    if (ComprimentoLimitado(grupo, MAX_GRUPO) < 0) return NEGADO;
+    const Leitura lida(*this);
+    const Instantaneo* s = lida.get();
+    if (!s) return NAO_SEI;
+    return s->idxGrupo.Achar(s->GrupoAtual(grupo)) >= 0 ? PERMITIDO : NEGADO;
 }
 
 int32_t Armazem::NoGrupo(const char* jogador, const char* grupo) const
@@ -1203,10 +1257,10 @@ int32_t Armazem::Grupos(const char* jogador, char* saida, int32_t tam) const
     const JogadorResolvido* achado = s->Achar(jogador);
     const JogadorResolvido& j = achado ? *achado : s->padrao;
 
-    // Grupos() aloca (monta um std::string) e é a ÚNICA consulta que aloca.
-    // Aceitável porque ela existe para o comando de chat e para o log — não
-    // para o laço do jogo. Quem chamar isto por tick está usando errado, e a
-    // documentação diz isso.
+    // Grupos() allocates (it builds a std::string) and it's the ONLY lookup
+    // that does. Acceptable because it exists for the chat command and for the
+    // log — not for the game loop. Anyone calling this per tick is using it
+    // wrong, and the documentation says so.
     const int64_t agora = Agora();
     std::string acc;
     for (const GrupoDoJogador& g : j.grupos)
@@ -1221,16 +1275,17 @@ int32_t Armazem::Grupos(const char* jogador, char* saida, int32_t tam) const
 }
 
 // ============================================================================
-//  escrita — fila + thread própria
+//  writing — a queue plus a thread of its own
 // ============================================================================
 // ── enfileirar com teto ──────────────────────────────────────────────────────
 //
-// Roda no LAÇO DO JOGO. Tudo aqui é O(1) e sob a trava por microssegundos: nada
-// de percorrer a fila (ver o porquê no campo m_vistosNaFila, em Armazem.h).
+// Runs in the GAME LOOP. Everything here is O(1) and under the lock for
+// microseconds: no walking the queue (see why at the m_vistosNaFila field, in
+// Armazem.h).
 //
 // false = recusada por teto. Quem chamou traduz isso para o retorno certo; a
-// mensagem de log fica com a thread escritora, que é quem pode ter freio de
-// repetição sem custar nada ao tick.
+// the log message belongs to the writer thread, which is the one that can have
+// a repetition brake without costing the tick anything.
 bool Armazem::Enfileirar(Tarefa&& t)
 {
     const bool visto = (t.tipo == Tarefa::VISTO);
@@ -1251,22 +1306,48 @@ int32_t Armazem::Conceder(const char* jogador, const char* grupo,
                           int64_t expiraEm, const char* quem)
 {
     if (!m_rodando.load(std::memory_order_acquire)) return NAO_SEI;
-    // ── o banco está fora: NAO_SEI, e não PERMITIDO ─────────────────────────
+    // ── the database is down: NAO_SEI, not PERMITIDO ────────────────────────
     //
-    // DEFEITO DE BOA-FÉ que isto conserta: com o MySQL do dono fora do ar, a
-    // versão anterior enfileirava, devolvia PERMITIDO e a tarefa era recusada
-    // depois, na thread escritora, só no log. O admin digitava `dar fulano
-    // vip`, lia "pronto", e o jogador reclamava no dia seguinte. Quem chamou
-    // precisa saber AGORA que não vai ser gravado — é o que permite responder
-    // "o banco esta fora, tente de novo" em vez de mentir.
+    // THE GOOD-FAITH DEFECT this fixes: with the owner's MySQL down, the
+    // previous version queued, returned PERMITIDO, and the task was refused
+    // later on the writer thread, in the log only. The admin typed
+    // `dar fulano vip`, read "pronto", and the player complained the next day.
+    // The caller needs to know NOW that it won't be written — that's what lets
+    // them answer "o banco esta fora, tente de novo" instead of lying.
     if (!m_bancoServe.load(std::memory_order_acquire)) return NAO_SEI;
-    // `t.jogador = jogador` constrói um std::string caminhando até o '\0': é o
-    // MESMO defeito da consulta, só que no caminho de escrita. Conferir antes.
+    // `t.jogador = jogador` builds a std::string by walking to the '\0': the
+    // SAME defect as on the lookup path, only on the write path. Check
+    // first.
     if (ComprimentoLimitado(jogador, MAX_ID)    < 0) return NEGADO;
     if (ComprimentoLimitado(grupo,   MAX_GRUPO) < 0) return NEGADO;
-    // `quem` é opcional e só vai para o diário: nulo vira "", mas texto sem
-    // terminador é recusado — enfileirar isso derrubaria a thread escritora.
+    // `quem` is optional and only goes into the audit log: null becomes "",
+    // but unterminated text is refused — queuing that would take the writer
+    // thread down.
     if (quem && ComprimentoLimitado(quem, MAX_TEXTO) < 0) return NEGADO;
+
+    // ── THE SAME GOOD-FAITH DEFECT, from the other cause ────────────────────
+    //
+    // The comment above fixes "the database is down". Its sibling was missing:
+    // the group DOESN'T EXIST. The task went into the queue, the writer thread
+    // found out, wrote "conceder ignorado: grupo 'x' nao existe" to the log —
+    // and the caller had already been handed PERMITIDO.
+    //
+    // Seen happening on 2026-08-20: `grupo <jogador> naoexiste` through
+    // ConanShop's queue answered "ok". The database did the right thing
+    // (nothing was written); it's the ANSWER that lied. An admin who mistypes a
+    // group name reads "ok" and walks away.
+    //
+    // The public header always promised `0 refused (group doesn't exist,
+    // invalid id)`. Now it keeps that promise.
+    //
+    // NAO_SEI while the snapshot hasn't come up: there's no asserting the group
+    // doesn't exist then, and NEGADO would swap one mistake for another.
+    {
+        const int32_t existe = GrupoExiste(grupo);
+        if (existe == NEGADO)  return NEGADO;
+        if (existe == NAO_SEI) return NAO_SEI;
+    }
+
     Tarefa t; t.tipo = Tarefa::CONCEDER;
     t.jogador = jogador; t.grupo = grupo; t.quem = quem ? quem : ""; t.expira = expiraEm;
     return Enfileirar(std::move(t)) ? PERMITIDO : NAO_SEI;
@@ -1287,13 +1368,15 @@ int32_t Armazem::Revogar(const char* jogador, const char* grupo, const char* que
 int32_t Armazem::VerJogador(const char* jogador, const char* nome)
 {
     if (!m_rodando.load(std::memory_order_acquire)) return NAO_SEI;
-    // Este é o caminho que chega em rajada do laço do jogo (ConanPermId ->
-    // VerJogador). Com o banco fora, sair aqui evita até o custo de construir
+    // This is the path that arrives in bursts from the game loop (ConanPermId
+    // -> VerJogador). With the database down, leaving here avoids even the cost
+    // of building
     // as strings da tarefa, 60 vezes por segundo por jogador, para nada.
     if (!m_bancoServe.load(std::memory_order_acquire)) return NAO_SEI;
     if (ComprimentoLimitado(jogador, MAX_ID) < 0) return NEGADO;
-    // O nome de exibição vem do jogo (FString já copiada para buffer nosso),
-    // mas VerJogador é público no Armazém e o teste chama direto. Teto igual.
+    // The display name comes from the game (an FString already copied into a
+    // buffer of ours), but VerJogador is public on Armazem and the test calls
+    // it directly. Same cap.
     if (nome && ComprimentoLimitado(nome, MAX_TEXTO) < 0) return NEGADO;
     Tarefa t; t.tipo = Tarefa::VISTO;
     t.jogador = jogador; t.nome = nome ? nome : "";
@@ -1303,7 +1386,8 @@ int32_t Armazem::VerJogador(const char* jogador, const char* nome)
 bool Armazem::Recarregar()
 {
     if (!m_rodando.load(std::memory_order_acquire)) return false;
-    // Recarregar com o banco fora não é erro de quem pediu: é só cedo demais.
+    // Reloading with the database down isn't the requester's mistake: it's
+    // just too early.
     // Devolver false deixa quem pediu dizer isso, em vez de a recarga sumir.
     if (!m_bancoServe.load(std::memory_order_acquire)) return false;
     Tarefa t; t.tipo = Tarefa::RECARREGAR;
@@ -1312,7 +1396,8 @@ bool Armazem::Recarregar()
 
 void Armazem::EsperarFila()
 {
-    // Só o teste usa. No jogo ninguém espera escrita — é o ponto do desenho.
+    // Only the test uses this. In the game nobody waits on a write — that's
+    // the whole point of the design.
     for (int i = 0; i < 20000; ++i)
     {
         if (m_feitas.load(std::memory_order_acquire) >=
@@ -1322,10 +1407,10 @@ void Armazem::EsperarFila()
 }
 
 // ============================================================================
-//  ExecutarTarefa — uma tarefa de escrita, do jeito que os dois bancos aceitam
+//  ExecutarTarefa — one write task, in the form both databases accept
 //
-//  Devolve false quando a tarefa NÃO foi aplicada. `mexeu` sai true só quando
-//  algo mudou de verdade e o instantâneo precisa ser refeito.
+//  Returns false when the task was NOT applied. `mexeu` comes out true only
+//  when something genuinely changed and the snapshot needs rebuilding.
 // ============================================================================
 bool Armazem::ExecutarTarefa(const Tarefa& t, bool& mexeu)
 {
@@ -1336,18 +1421,20 @@ bool Armazem::ExecutarTarefa(const Tarefa& t, bool& mexeu)
     {
     case Tarefa::CONCEDER:
     {
-        // ── por que o id do grupo é PERGUNTADO, e não inferido ──────────────
+        // ── why the group's id is ASKED FOR, not inferred ───────────────────
         //
-        // A versão anterior fazia `INSERT ... SELECT ... FROM grupo WHERE
-        // chave=?` e concluía "grupo nao existe" quando o contador de linhas
-        // afetadas vinha 0. No SQLite isso funciona. No MySQL, NÃO: um
-        // `ON DUPLICATE KEY UPDATE` que reescreve a linha com os MESMOS valores
-        // devolve 0 afetadas — indistinguível de "não achei o grupo".
+        // The previous version did `INSERT ... SELECT ... FROM grupo WHERE
+        // chave=?` and concluded "the group doesn't exist" when the affected-row
+        // count came back 0. On SQLite that works. On MySQL it does NOT: an
+        // `ON DUPLICATE KEY UPDATE` that rewrites the row with the SAME values
+        // returns 0 affected — indistinguishable from "I didn't find the
+        // group".
         //
-        // O sintoma seria de boa-fé puro: o admin dá VIP de novo para quem já
-        // tem, e o log responde "grupo 'vip' nao existe". Ele vai procurar um
-        // defeito que não está lá. Perguntar o id primeiro troca uma inferência
-        // por um fato, e vale igual nos dois bancos.
+        // The symptom would be pure good faith: the admin grants VIP again to
+        // somebody who already has it, and the log answers
+        // "grupo 'vip' nao existe". They go hunting for a defect that isn't
+        // there. Asking for the id first trades an inference for a fact, and it
+        // holds the same on both databases.
         int64_t gid = -1;
         {
             std::unique_ptr<IComando> c = m_banco->Preparar(S.grupo_id_por_chave_ou_apelido);
@@ -1358,16 +1445,18 @@ bool Armazem::ExecutarTarefa(const Tarefa& t, bool& mexeu)
         }
         if (gid < 0)
         {
-            // Não é falha do banco: é comando errado. Devolve true (a tarefa foi
-            // tratada) para o reenvio não tentar de novo o que nunca daria certo.
+            // Not a database failure: a wrong command. It returns true (the
+            // task was handled) so the resend doesn't retry what could never
+            // work.
             Registrar("[permission] conceder ignorado: grupo '%s' nao existe "
                       "(nem como chave nem como apelido)", t.grupo.c_str());
             return true;
         }
 
-        // BEGIN: as três escritas (jogador, vínculo, diário) ou valem juntas ou
-        // não valem. Se o servidor cair no meio, o banco desfaz o pedaço — não
-        // fica jogador criado sem grupo nem diário registrando o que não
+        // BEGIN: the three writes (player, link, audit row) either all count
+        // or none do. If the server dies halfway, the database undoes the
+        // fragment — there's no player created without a group and no audit row
+        // recording what
         // aconteceu.
         if (!m_banco->Iniciar())
         { Registrar("[permission] conceder: nao abriu transacao: %s", m_banco->Erro()); return false; }
@@ -1390,9 +1479,10 @@ bool Armazem::ExecutarTarefa(const Tarefa& t, bool& mexeu)
         if (ok)
         {
             char det[256];
-            // O reenvio é MARCADO no diário. Sem isto, uma auditoria com duas
-            // linhas iguais para a mesma concessão vira mistério; com isto, ela
-            // se explica sozinha. Ver Trabalhar() para quando o reenvio acontece.
+            // The resend is MARKED in the audit log. Without this, an audit
+            // finding two identical rows for the same grant becomes a mystery;
+            // with it, it explains itself. See Trabalhar() for when a resend
+            // happens.
             std::snprintf(det, sizeof(det), "grupo=%s expira=%lld%s",
                           t.grupo.c_str(), static_cast<long long>(t.expira),
                           t.reenvio ? " (reenviado apos queda da conexao com o banco)" : "");
@@ -1451,11 +1541,11 @@ bool Armazem::ExecutarTarefa(const Tarefa& t, bool& mexeu)
         }
         if (ok)
         {
-            // O detalhe ACRESCENTA a marca do reenvio em vez de SUBSTITUIR o
-            // nome do grupo. A versão anterior trocava um pelo outro, e a linha
-            // do diário de uma revogação reenviada saía sem dizer qual grupo
-            // foi revogado — perdendo justamente o dado que faz o diário
-            // existir ("quem tirou o VIP de quem?").
+            // The detail field APPENDS the resend marker instead of REPLACING
+            // the group's name. The previous version swapped one for the other,
+            // and a resent revocation's audit row came out without saying which
+            // group was revoked — losing exactly the datum that makes the audit
+            // log worth having ("who took whose VIP away?").
             char det[256];
             std::snprintf(det, sizeof(det), "%s%s", t.grupo.c_str(),
                           t.reenvio ? " (reenviado apos queda da conexao com o banco)" : "");
@@ -1494,17 +1584,18 @@ bool Armazem::ExecutarTarefa(const Tarefa& t, bool& mexeu)
                           && c->Executar();
         if (!ok)
         { Registrar("[permission] visto falhou (%s): %s", t.jogador.c_str(), m_banco->Erro()); return false; }
-        // Não reconstrói: "visto" não muda permissão nenhuma. Reconstruir a
-        // cada login seria pagar um instantâneo inteiro por dado que só serve
-        // para o admin ler nome no lugar de número.
+        // No rebuild: "seen" changes no permission at all. Rebuilding on every
+        // login would mean paying for a whole snapshot for data that only lets
+        // the admin read a name instead of a number.
         mexeu = false;
         return true;
     }
 
     case Tarefa::RECARREGAR:
         if (!m_caminhoJson.empty()) AplicarConfig(m_caminhoJson.c_str());
-        // Reconstrói mesmo se a config foi recusada: é barato, e devolver o
-        // instantâneo coerente com o que está NO BANCO é sempre certo.
+        // It rebuilds even if the config was refused: it's cheap, and handing
+        // back a snapshot coherent with what's IN THE DATABASE is always
+        // right.
         mexeu = true;
         return true;
 
@@ -1514,23 +1605,23 @@ bool Armazem::ExecutarTarefa(const Tarefa& t, bool& mexeu)
 }
 
 // ============================================================================
-//  CuidarDaConexao — toda a política de "o banco do dono não colabora"
+//  CuidarDaConexao — the whole "the owner's database won't cooperate" policy
 //
-//  Roda na thread escritora, uma vez por volta do laço. Nunca no laço do jogo.
+//  Runs on the writer thread, once per pass. Never in the game loop.
 //
-//  Trata os dois casos com o MESMO mecanismo, porque para o dono do servidor
-//  eles são o mesmo problema ("meu MySQL não está atendendo"):
-//     · nunca abriu     — senha errada, banco não criado, sem GRANT, MySQL
-//                         ainda subindo, porta fechada, host errado;
-//     · abriu e caiu    — reinício do banco, KILL de conexão, wait_timeout,
-//                         blip de rede.
+//  It handles both cases with the SAME mechanism, because to the server owner
+//  they are the same problem ("my MySQL isn't answering"):
+//     · never opened      — wrong password, database not created, no GRANT,
+//                           MySQL still coming up, closed port, wrong host;
+//     · opened and dropped — a database restart, a KILLed connection,
+//                           wait_timeout, a network blip.
 // ============================================================================
 void Armazem::CuidarDaConexao()
 {
-    // Desligando: não se começa abertura nenhuma. Sem isto, um Fechar() pedido
-    // durante o arranque esperaria a abertura inteira — 120 s medidos contra um
-    // MySQL a 2 s por comando. (A abertura JÁ EM CURSO é cortada por outro
-    // caminho: Fechar chama IBanco::Interromper.)
+    // Shutting down: don't start any opening at all. Without this, a Fechar()
+    // asked for during startup would wait out the whole open — 120 s measured
+    // against a MySQL at 2 s per command. (An open ALREADY IN FLIGHT is cut off
+    // by another route: Fechar calls IBanco::Interromper.)
     if (!m_rodando.load(std::memory_order_acquire)) return;
 
     const bool temBanco = (m_banco != nullptr);
@@ -1541,16 +1632,17 @@ void Armazem::CuidarDaConexao()
 
     const int64_t agora = Agora();
 
-    // Acabou de cair: registra na hora, uma vez, e zera a espera para a
-    // primeira tentativa ser rápida (um blip de 3 s tem de se resolver em 5 s,
-    // não em 5 minutos).
+    // It just dropped: log it right away, once, and reset the backoff so the
+    // first retry is quick (a 3-second blip has to clear in 5 s, not in 5
+    // minutes).
     //
-    // Quem decide se a linha já foi escrita é m_estavaServindo, e NÃO
-    // m_bancoServe: a queda quase sempre é descoberta DENTRO de uma tarefa que
-    // falhou, e essa tarefa já derrubou m_bancoServe para o laço do jogo parar
-    // de aceitar escrita. Usando m_bancoServe aqui, o caso comum — o único que
-    // acontece de verdade — passava em silêncio, e o dono só via a mensagem
-    // periódica cinco minutos depois, escrita como se ele já soubesse.
+    // What decides whether the line has already been written is
+    // m_estavaServindo, NOT m_bancoServe: the drop is almost always discovered
+    // INSIDE a task that failed, and that task has already knocked
+    // m_bancoServe down so the game loop stops accepting writes. Using
+    // m_bancoServe here, the common case — the only one that really happens —
+    // passed in silence, and the owner only saw the periodic message five
+    // minutes later, written as if they already knew.
     if (!vivo && m_estavaServindo)
     {
         m_estavaServindo = false;
@@ -1569,31 +1661,32 @@ void Armazem::CuidarDaConexao()
 
     if (agora < m_proximaTentativa) return;       // freio: ainda não é a hora
 
-    // Espera crescente. Marcada ANTES de tentar, de propósito: a tentativa em
-    // si pode demorar (até MysqlTempoConectarMs), e marcar depois faria a
-    // espera real ser "espera + tentativa", que é uma coisa diferente da que
-    // está escrita no log.
+    // Growing backoff. Stamped BEFORE trying, on purpose: the attempt itself
+    // can take a while (up to MysqlTempoConectarMs), and stamping afterwards
+    // would make the real wait "backoff + attempt", which is a different thing
+    // from what the log says.
     m_esperaSegundos = m_esperaSegundos ? std::min(m_esperaSegundos * 2, ESPERA_TETO)
                                         : ESPERA_PRIMEIRA;
     m_proximaTentativa = agora + m_esperaSegundos;
 
     bool ok = false;
-    // ── reconexão barata primeiro, refazer do zero depois ───────────────────
+    // ── the cheap reconnect first, the full rebuild after ───────────────────
     //
-    // Reconectar() reusa o que já foi lido do config e não repete esquema nem
-    // configuração: é o certo para o caso comum (o banco piscou). Mas ele NÃO
-    // relê o config.json, então uma senha corrigida não valeria nunca. Depois
-    // de duas falhas seguidas o banco é solto e a próxima volta refaz tudo a
-    // partir do arquivo — que é o caminho que deixa o dono consertar sem
-    // reiniciar o servidor de jogo.
+    // Reconectar() reuses what was already read from the config and repeats
+    // neither the schema nor the configuration: that's right for the common
+    // case (the database blinked). But it does NOT re-read config.json, so a
+    // corrected password would never take. After two failures in a row the
+    // database is dropped and the next pass rebuilds everything from the file —
+    // which is the path that lets the owner fix things without restarting the
+    // game server.
     if (temBanco && m_falhasReconexao < 2)
     {
         ok = m_banco->Reconectar();
         if (ok)
         {
-            // Reconectar depois de uma queda pode significar que perdemos
-            // escritas nossas ou de outro servidor apontado para o mesmo banco;
-            // refazer o instantâneo do que está no banco é sempre certo.
+            // Reconnecting after a drop can mean we lost writes of our own, or
+            // of another server pointed at the same database; rebuilding the
+            // snapshot from what's in the database is always right.
             ok = Reconstruir();
         }
         if (!ok)
@@ -1627,10 +1720,11 @@ void Armazem::CuidarDaConexao()
         { std::lock_guard<std::mutex> g(m_mtxFila);
           descartadas = m_descartadasDesdeAviso; m_descartadasDesdeAviso = 0; }
 
-        // "DE VOLTA" só se ele já tinha ido embora. Na primeira abertura de
-        // todas isto é o arranque normal, e anunciar uma volta que não houve
-        // faria o dono procurar uma queda que nunca aconteceu — o mesmo tipo
-        // de mensagem enganosa que esta tarefa existe para tirar do caminho.
+        // "BACK" only if it had actually gone away. On the very first open
+        // this is ordinary startup, and announcing a return that never happened
+        // would send the owner hunting for a drop that never occurred — the
+        // same kind of misleading message this task exists to get out of the
+        // way.
         if (m_arranqueFeito.load(std::memory_order_acquire))
         {
             Registrar("[permission] BANCO DE VOLTA (%s). O Permission esta respondendo "
@@ -1648,13 +1742,13 @@ void Armazem::CuidarDaConexao()
 
     m_bancoServe.store(false, std::memory_order_release);
 
-    // ── a PRIMEIRA falha ganha o aviso em moldura ───────────────────────────
+    // ── the FIRST failure gets the boxed warning ────────────────────────────
     //
-    // `!m_arranqueFeito` é exatamente "esta é a primeira tentativa de todas" —
-    // quem marca essa bandeira é Trabalhar(), logo depois da primeira chamada
-    // desta função. São as linhas que o dono do servidor vai ler e colar num
-    // fórum, e elas dizem, nesta ordem: o que NÃO está acontecendo, por que
-    // não inventei outro lugar para gravar, e o que vai acontecer sozinho.
+    // `!m_arranqueFeito` is exactly "this is the very first attempt" — the flag
+    // is set by Trabalhar(), right after this function's first call. These are
+    // the lines the server owner will read and paste into a forum, and they
+    // say, in this order: what is NOT happening, why we didn't invent somewhere
+    // else to write, and what will happen on its own.
     if (!m_arranqueFeito.load(std::memory_order_acquire))
     {
         Registrar("[permission] ############################################################");
@@ -1675,13 +1769,13 @@ void Armazem::CuidarDaConexao()
         return;
     }
 
-    // ── aviso periódico ─────────────────────────────────────────────────────
+    // ── the periodic warning ────────────────────────────────────────────────
     //
-    // Repetir a cada 5 min é obrigatório, não ruído: senha errada e falta de
-    // GRANT não se consertam sozinhas, e o dono lê o log HORAS depois — quando
-    // o jogador reclama. A essa altura a linha do arranque está soterrada sob
-    // o log do jogo, e uma mensagem que ele não encontra é uma mensagem que
-    // não existe.
+    // Repeating every 5 min is mandatory, not noise: a wrong password and a
+    // missing GRANT don't fix themselves, and the owner reads the log HOURS
+    // later — when a player complains. By then the startup line is buried under
+    // the game's own log, and a message they can't find is a message that
+    // doesn't exist.
     if (agora - m_ultimoAvisoConexao >= AVISO_A_CADA)
     {
         m_ultimoAvisoConexao = agora;
@@ -1708,11 +1802,12 @@ void Armazem::CuidarDaConexao()
 
 void Armazem::Trabalhar()
 {
-    // ── a PRIMEIRA abertura acontece aqui, antes de esperar por qualquer coisa
+    // ── the FIRST open happens here, before waiting on anything ─────────────
     //
-    // É o que tira o custo do banco de dentro do arranque do servidor: Abrir()
-    // só espera por este resultado, e no máximo ARRANQUE_ESPERA_MS. Se o banco
-    // do dono for lento, o servidor sobe e esta thread continua trabalhando.
+    // This is what takes the database's cost out of the server's startup:
+    // Abrir() only waits for this result, and for at most ARRANQUE_ESPERA_MS.
+    // If the owner's database is slow, the server comes up and this thread
+    // keeps working.
     CuidarDaConexao();
     m_arranqueFeito.store(true, std::memory_order_release);
 
@@ -1723,11 +1818,11 @@ void Armazem::Trabalhar()
         {
             std::unique_lock<std::mutex> g(m_mtxFila);
 
-            // Quanto esperar: 60 s no caso bom (é o relógio da faxina de
-            // vencidos). Com o banco fora, no máximo até a hora da próxima
-            // tentativa — senão a recuperação ficaria refém de alguém mandar um
-            // comando, e um servidor ocioso com o MySQL de volta continuaria
-            // ausente até o primeiro `dar`.
+            // How long to wait: 60 s in the good case (that's the clock for
+            // sweeping expired entries). With the database down, at most until
+            // the next attempt is due — otherwise recovery would be hostage to
+            // somebody sending a command, and an idle server whose MySQL came
+            // back would stay absent until the first `dar`.
             int64_t espera = 60;
             if (!m_bancoServe.load(std::memory_order_acquire))
             {
@@ -1749,22 +1844,23 @@ void Armazem::Trabalhar()
         if (temTarefa && t.tipo == Tarefa::SAIR)
         { m_feitas.fetch_add(1, std::memory_order_release); return; }
 
-        // Antes de qualquer tarefa: o banco está de pé? Isto cobre os dois
-        // casos (nunca abriu / caiu depois) e é o único lugar que decide.
+        // Before any task: is the database up? This covers both cases (never
+        // opened / dropped later) and it's the only place that decides.
         CuidarDaConexao();
 
         if (!temTarefa)
         {
             if (!m_rodando.load(std::memory_order_acquire)) return;
-            // ── faxina de vencidos ──────────────────────────────────────────
-            // A leitura JÁ ignora vencido, então o VIP para de valer na hora
-            // exata, sem depender desta faxina. Ela existe só para o banco não
-            // acumular lixo e para o log/`grupos` ficarem limpos. Ordem
-            // importa: primeiro a garantia, depois a arrumação.
+            // ── sweeping expired entries ────────────────────────────────────
+            // Reads ALREADY ignore anything expired, so a VIP stops applying at
+            // the exact moment it should, without depending on this sweep. It
+            // exists only to keep the database from piling up junk and to keep
+            // the log and `grupos` clean. Order matters: the guarantee first,
+            // the tidying after.
             //
-            // Com o banco fora do ar a faxina não roda — e isso está certo: ela
-            // é arrumação, e arrumação não justifica insistir contra um banco
-            // caído.
+            // With the database down the sweep doesn't run — and that's right:
+            // it's tidying, and tidying doesn't justify hammering a database
+            // that's already down.
             if (m_bancoServe.load(std::memory_order_acquire) && m_banco)
             {
                 std::unique_ptr<IComando> c = m_banco->Preparar(m_banco->S().faxina_vencidos);
@@ -1780,56 +1876,59 @@ void Armazem::Trabalhar()
 
         bool mexeu = false;
         bool ok    = false;
-        // ── `tentou` NÃO é decoração: sem ele o freio de 15 s não existe ────
+        // ── `tentou` is NOT decoration: without it the 15 s brake doesn't
+        //    exist
         //
-        // Achado na revisão da própria alteração (§19), antes de rodar. O
-        // reenvio abaixo disparava com `!ok && !Vivo()`. Com o banco fora do
-        // ar a tarefa NEM CHEGA a ser tentada — e mesmo assim `ok` é false e
-        // `Vivo()` é false, então o reenvio disparava e chamava Reconectar()
-        // direto, POR FORA do freio. Com uma fila de tarefas e um MySQL caído
-        // isso vira uma tentativa de conexão atrás da outra, cada uma custando
-        // até MysqlTempoConectarMs — exatamente a martelada no banco caído que
-        // o freio existe para impedir. Reenvio só faz sentido para tarefa que
-        // FOI tentada e pegou a queda no meio.
+        // Found while reviewing the change itself (§19), before running it. The
+        // resend below fired on `!ok && !Vivo()`. With the database down the
+        // task NEVER EVEN GETS tried — and `ok` is still false and `Vivo()` is
+        // still false, so the resend fired and called Reconectar() directly,
+        // OUTSIDE the brake. With a queue of tasks and a dead MySQL that
+        // becomes one connection attempt after another, each costing up to
+        // MysqlTempoConectarMs — exactly the hammering of a dead database the
+        // brake exists to prevent. A resend only makes sense for a task that
+        // WAS tried and caught the drop mid-way.
         bool tentou = false;
         if (m_banco && m_banco->Vivo())
         {
             tentou = true;
             ok = ExecutarTarefa(t, mexeu);
-            // A queda pode ter acontecido AGORA, no meio desta tarefa. Publicar
-            // na hora impede que o laço do jogo continue aceitando escrita por
-            // até 60 s (o tempo até esta thread acordar de novo) com o banco já
-            // morto — cada uma dessas viraria um "pronto" que não aconteceu.
+            // The drop may have happened RIGHT NOW, in the middle of this
+            // task. Publishing immediately stops the game loop from carrying on
+            // accepting writes for up to 60 s (the time until this thread wakes
+            // again) against a database that's already dead — every one of
+            // those would become a "pronto" that never happened.
             if (!ok && !m_banco->Vivo())
                 m_bancoServe.store(false, std::memory_order_release);
         }
         else
         {
-            // ── por que isto é CONTADO e não impresso ───────────────────────
+            // ── why this is COUNTED and not printed ─────────────────────────
             //
-            // Uma linha de log por tarefa recusada parece diagnóstico e é uma
-            // segunda forma de o banco derrubar o jogo: `VerJogador` chega em
-            // rajada do laço do jogo (ConanPermId), e com o MySQL fora do ar
-            // isso vira centenas de linhas por segundo no ConanApi.log. Disco
-            // cheio derruba o servidor de Conan — e leva o save junto.
-            // O total sai no aviso periódico, que tem freio de 5 min.
+            // One log line per refused task looks like diagnostics and is a
+            // second way for the database to take the game down: `VerJogador`
+            // arrives in bursts from the game loop (ConanPermId), and with
+            // MySQL down that becomes hundreds of lines a second in
+            // ConanApi.log. A full disk takes the Conan server down — and takes
+            // the save with it. The total goes out in the periodic warning,
+            // which has a 5-minute brake.
             ++m_recusadasDesdeAviso;
         }
 
-        // ── reenvio: UMA vez, e só quando a CONEXÃO foi o motivo ────────────
+        // ── resend: ONCE, and only when the CONNECTION was the reason ───────
         //
-        // POR QUE REENVIAR É SEGURO AQUI, E SÓ AQUI
-        // As três tarefas de escrita são idempotentes por construção:
-        // conceder é upsert com os mesmos valores, revogar é DELETE de uma
-        // linha que já pode ter sumido, visto é upsert. Aplicar duas vezes dá
-        // o mesmo estado final. O que NÃO é idempotente é o diário, que é
-        // append-only — por isso a linha reenviada vai MARCADA (ver
-        // ExecutarTarefa), em vez de o reenvio ser escondido.
+        // WHY RESENDING IS SAFE HERE, AND ONLY HERE
+        // The three write tasks are idempotent by construction: conceder is an
+        // upsert with the same values, revogar is a DELETE of a row that may
+        // already be gone, visto is an upsert. Applying them twice gives the
+        // same final state. What is NOT idempotent is the audit log, which is
+        // append-only — so the resent row goes in MARKED (see ExecutarTarefa),
+        // rather than the resend being hidden.
         //
-        // POR QUE NÃO REENVIAR SEMPRE: se a tarefa falhou por SQL, dado ou
-        // configuração, repetir só produz o mesmo erro. `Vivo()` separa as duas
-        // causas — é a única pergunta que distingue "o banco sumiu" de "o
-        // comando estava errado".
+        // WHY NOT ALWAYS RESEND: if the task failed on SQL, on data or on
+        // configuration, repeating it just produces the same error. `Vivo()`
+        // separates the two causes — it's the only question that tells "the
+        // database went away" from "the command was wrong".
         if (tentou && !ok && !t.reenvio && m_banco && !m_banco->Vivo())
         {
             Registrar("[permission] a conexao com o banco caiu no meio desta tarefa. "
@@ -1851,11 +1950,12 @@ void Armazem::Trabalhar()
             else
             {
                 Registrar("[permission] nao consegui reconectar: %s", m_banco->Erro());
-                // Esta tentativa CONTA para a política de reconexão: sem isso o
-                // reenvio seria uma porta lateral que nunca chega ao "solta o
-                // banco e relê o config.json", e uma senha corrigida só valeria
-                // se, por acaso, nenhuma tarefa estivesse na fila na hora da
-                // queda. Duas portas para a mesma decisão divergem.
+                // This attempt COUNTS towards the reconnection policy:
+                // without that, the resend would be a side door that never
+                // reaches "drop the database and re-read config.json", and a
+                // corrected password would only take if, by luck, no task
+                // happened to be queued when the drop occurred. Two doors to
+                // the same decision drift apart.
                 ++m_falhasReconexao;
             }
         }

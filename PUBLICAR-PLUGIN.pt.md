@@ -1,5 +1,7 @@
 # Publicar um plugin — o que a gente pede, e por quê
 
+*Tradução. O documento principal é o [PUBLISHING-A-PLUGIN.md](PUBLISHING-A-PLUGIN.md), em inglês.*
+
 Não existe processo burocrático aqui. Mas tem três coisas que a gente pede, e
 cada uma nasceu de um problema real.
 

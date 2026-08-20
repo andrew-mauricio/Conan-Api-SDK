@@ -180,8 +180,12 @@ typedef struct ConanApiTabela
     // ── diagnostics ─────────────────────────────────────────────────────────
     //
     // Writes to Conan-Api/Logs/ConanApi.log, timestamped and rotated. This is
-    // your channel to the server owner — and the only one, because handing text
-    // back to the game crashes the server (see the documentation).
+    // your channel to the SERVER OWNER: what they read when something went
+    // wrong, hours later.
+    //
+    // To talk to a PLAYER, use MensagemParaTodos / MensagemParaJogador /
+    // MensagemNaTela further down. Those arrived in v3; before them a plugin
+    // really was mute, and this comment used to say so.
     void (*Log)(const char* fmt, ...);
 
     // Is reflection up? If this returns 0, the game most likely updated and the
@@ -328,8 +332,11 @@ typedef struct ConanApiTabela
     int (*DefinirRetorno)(ConanChamada* c, const void* valor, uint32_t tam);
 
     // Text that ALREADY belongs to the game (an FString in a parameter block)
-    // into a char*. Read only: building our own FString and handing it to the
-    // game crashes the server.
+    // into a char*. This is the way IN.
+    //
+    // The way OUT is CriarTextoDoJogo / CriarTextoRicoDoJogo (v4, further down):
+    // they ask the GAME to allocate. Building the 16 bytes yourself, pointing at
+    // your own buffer, still crashes the server — see the note on those two.
     int (*LerTextoDoJogo)(const void* base, uint32_t offset, char* saida, int tam);
 
     // ── the runtime's own diagnostics ───────────────────────────────────────
@@ -426,7 +433,7 @@ typedef struct ConanApiTabela
     int (*MensagemParaTodos)(const char* texto);
 
     // Talks to ONE player, by the name they use in game. That name comes, for
-    // instance, from the chat's `userName` field (see Docs/EVENTOS.md).
+    // instance, from the chat's `userName` field (see Docs/EVENTS.md).
     //
     //     g_api->MensagemParaJogador(name, "Kit delivered. Come back in 24h.");
     //
@@ -440,9 +447,19 @@ typedef struct ConanApiTabela
     //
     //     g_api->MensagemNaTela(pc, "Welcome to the server!", 8.0f);
     //
-    // Conan's HUD functions take FText (a considerably more complex type, with a
-    // localisation table). This one uses ClientMessage, which does the job with
-    // an FString and is Unreal's classic route for a server to write on screen.
+    // This one goes through ClientMessage, which does the job with an FString
+    // and is Unreal's classic route for a server to write on screen.
+    //
+    // Conan's own HUD functions take FText instead. Those are reachable too, and
+    // are what Conan Shop uses in production — build the FText with
+    // CriarTextoRicoDoJogo (v4) and call the function by name:
+    //
+    //     unsigned char t[16];
+    //     if (api->CriarTextoRicoDoJogo("You have 250 points", t)) {
+    //         const void*    a[3] = { t, &sim, &nao };
+    //         const uint32_t z[3] = { 16, 1, 1 };
+    //         api->ChamarFuncao(pc, "ClientHUDShowNotification", a, z, 3, 0, 0);
+    //     }
     int (*MensagemNaTela)(void* playerController, const char* texto, float segundos);
 
     // ── v4: TEXT BACKED BY GAME MEMORY ──────────────────────────────────────
@@ -511,8 +528,15 @@ typedef struct ConanApiTabela
     // what the game does in 6,157 of the signatures: writing into an OUTPUT
     // slot. Without this, a third of the SDK could not work through the table.
     //
-    // The four output types are not fussiness — each has exactly one way of
-    // being read safely:
+    // The four output types (ConanSaida.tipo, at the top of this file) are not
+    // fussiness — each has exactly one way of being read safely:
+    //
+    //   CONAN_SAIDA_POD        copy the slot's bytes;
+    //   CONAN_SAIDA_TEXTO      an FString: DECODE it. Copying the 16 bytes would
+    //                          hand you a pointer ProcessEvent destroys;
+    //   CONAN_SAIDA_TEXTO_RICO an FText, for the same reason;
+    //   CONAN_SAIDA_LISTA      a TArray: copy the ELEMENTS, never the header —
+    //                          the pointer inside it belongs to the game.
 
     // Like ChamarFuncao, plus the output slots. Returns 1 if it executed.
     // Outputs are copied AFTER the call and BEFORE the game destroys the

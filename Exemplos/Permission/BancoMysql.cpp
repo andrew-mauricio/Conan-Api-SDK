@@ -1,47 +1,50 @@
 // ============================================================================
-//  BancoMysql.cpp — o mesmo Armazem, falando com um MySQL do dono do servidor
+//  BancoMysql.cpp — the same Armazem, talking to the server owner's MySQL
 //
 //  ┌──────────────────────────────────────────────────────────────────────┐
-//  │  ISTO BLOQUEIA. Conectar espera rede; Executar espera resposta.      │
-//  │  NADA AQUI PODE SER CHAMADO NA THREAD DO JOGO.                       │
-//  │  Quem garante isso é o desenho do Armazem: leitura de permissão      │
-//  │  responde do instantâneo em memória e não encosta em banco nenhum;   │
-//  │  só a thread escritora e o arranque chegam até aqui.                 │
+//  │  THIS BLOCKS. Connecting waits on the network; Executar waits for a  │
+//  │  reply. NOTHING HERE MAY BE CALLED ON THE GAME'S THREAD.             │
+//  │  What guarantees that is Armazem's design: a permission read answers │
+//  │  from the in-memory snapshot and touches no database at all; only    │
+//  │  the writer thread and startup get this far.                         │
 //  └──────────────────────────────────────────────────────────────────────┘
 //
-//  A PARTE QUE MERECE OLHO: NÃO HÁ PREPARED STATEMENT
-//  --------------------------------------------------
-//  O MySqlCliente desta casa fala COM_QUERY e mais nada (ver MySqlCliente.h).
-//  Então `?1` não é ligado pelo protocolo: ele é SUBSTITUÍDO no texto, pelo
-//  literal que o MySqlCliente::Citar() produziu — Citar escapa E envolve em
-//  aspas, e o par escape/aspas foi exercitado com 15 payloads de injeção em
-//  dois servidores de verdade.
+//  THE PART THAT DESERVES A CLOSE LOOK: THERE ARE NO PREPARED STATEMENTS
+//  ---------------------------------------------------------------------
+//  This house's MySqlCliente speaks COM_QUERY and nothing else (see
+//  MySqlCliente.h). So `?1` isn't bound by the protocol: it is SUBSTITUTED into
+//  the text, by the literal MySqlCliente::Citar() produced — Citar escapes AND
+//  wraps in quotes, and the escape/quote pair was exercised with 15 injection
+//  payloads against two real servers.
 //
-//  A substituição é a superfície nova de risco deste arquivo, e por isso ela é
-//  restritiva, não permissiva:
-//    · PULA o que está dentro de literal ('...') e de crase (`...`), incluindo
-//      as duas formas de escape ('' e \'). Um `?1` escrito dentro de um texto
-//      é texto, e trocá-lo seria corromper o dado;
-//    · `?` que não é seguido de dígito é RECUSA — não existe `?` posicional
-//      neste código, e aceitar um seria abrir a porta para o que não se
-//      previu;
-//    · marcador sem valor ligado é RECUSA. SQL com `?3` solto NÃO é enviado.
-//      Falha fechada: comando não executado é problema visível; comando
-//      executado com marcador virando literal é dado errado em silêncio.
+//  The substitution is this file's new risk surface, which is why it's
+//  restrictive rather than permissive:
+//    · it SKIPS anything inside a literal ('...') and inside backticks
+//      (`...`), including both escape forms ('' and \'). A `?1` written inside
+//      a piece of text is text, and replacing it would corrupt the data;
+//    · a `?` not followed by a digit is a REFUSAL — there's no positional `?`
+//      in this code, and accepting one would open the door to what wasn't
+//      anticipated;
+//    · a placeholder with no bound value is a REFUSAL. SQL with a loose `?3`
+//      is NOT sent. Fail closed: a command that didn't run is a visible
+//      problem; a command that ran with a placeholder turned into a literal is
+//      wrong data in silence.
 //
-//  Isso é a terceira camada, não a primeira. As outras duas, provadas rodando
-//  no MySqlCliente: CLIENT_MULTI_STATEMENTS DESLIGADO (um `'; DROP TABLE` não
-//  tem como virar um segundo comando) e utf8mb4 forçado (em GBK/SJIS/BIG5 o
-//  escape byte a byte é furado).
+//  That's the third layer, not the first. The other two, proved running in
+//  MySqlCliente: CLIENT_MULTI_STATEMENTS OFF (a `'; DROP TABLE` has no way to
+//  become a second command) and utf8mb4 forced (in GBK/SJIS/BIG5, byte-by-byte
+//  escaping has holes).
 //
-//  O QUE ESTE ARQUIVO NÃO FAZ
+//  WHAT THIS FILE DOES NOT DO
 //  --------------------------
-//  · não reconecta sozinho no meio de uma operação. Reconectar escondido
-//    reexecutaria comando que já pode ter sido aplicado no servidor. Quem
-//    decide repetir é o Armazem, que sabe quais tarefas são idempotentes;
-//  · não fala TLS. A senha nunca vai em claro no fio, mas as consultas
-//    trafegam abertas (ver o topo de MySqlCliente.cpp). Aceitável para MySQL
-//    na mesma máquina ou em rede privada; não para MySQL exposto na internet.
+//  · it doesn't reconnect on its own in the middle of an operation. A hidden
+//    reconnect would re-run a command that may already have been applied on the
+//    server. Deciding to retry is Armazem's job, since it knows which tasks are
+//    idempotent;
+//  · it doesn't speak TLS. The password never goes over the wire in the clear,
+//    but the queries travel unencrypted (see the top of MySqlCliente.cpp).
+//    Acceptable for a MySQL on the same machine or on a private network; not
+//    for a MySQL exposed to the internet.
 // ============================================================================
 #include "Banco.h"
 #include "MySqlCliente.h"
@@ -55,11 +58,11 @@ namespace Perm
 {
 namespace
 {
-// ── uma linha do resultado do MySQL ─────────────────────────────────────────
+// ── one row of a MySQL result ───────────────────────────────────────────────
 //
-// O protocolo de texto entrega TUDO como string; `Inteiro` converte. NULL vem
-// como nullptr e vira 0 — as colunas onde o Armazem chama Inteiro são todas
-// declaradas NOT NULL, então o 0 é rede de segurança, não caminho normal.
+// The text protocol hands EVERYTHING back as a string; `Inteiro` converts. NULL
+// arrives as nullptr and becomes 0 — the columns where Armazem calls Inteiro
+// are all declared NOT NULL, so the 0 is a safety net, not the normal path.
 class LinhaMysql : public ILinha
 {
 public:
@@ -79,9 +82,10 @@ private:
 
 class BancoMysql;
 
-// ── substituição de `?N` ────────────────────────────────────────────────────
+// ── substituting `?N` ───────────────────────────────────────────────────────
 //
-// Devolve false e escreve o motivo em `erro` em vez de produzir SQL duvidoso.
+// Returns false and writes the reason into `erro` rather than producing
+// questionable SQL.
 bool Substituir(const char* sql, const std::vector<std::string>& valores,
                 const std::vector<bool>& ligado, std::string& saida, std::string& erro)
 {
@@ -91,7 +95,7 @@ bool Substituir(const char* sql, const std::vector<std::string>& valores,
 
     for (const char* p = sql; *p; )
     {
-        // literal de texto: copia inteiro sem olhar para dentro
+        // a text literal: copy it whole without looking inside
         if (*p == '\'')
         {
             saida += *p++;
@@ -104,7 +108,7 @@ bool Substituir(const char* sql, const std::vector<std::string>& valores,
             }
             continue;
         }
-        // identificador com crase: mesma regra
+        // a backticked identifier: same rule
         if (*p == '`')
         {
             saida += *p++;
@@ -144,8 +148,9 @@ public:
     bool LigarTexto(int pos, const char* v) override
     {
         if (!Espaco(pos)) return false;
-        // Citar() escapa E põe as aspas. nullptr vira o NULL do SQL — que é
-        // coisa diferente de string vazia, e o banco distingue as duas.
+        // Citar() escapes AND adds the quotes. nullptr becomes SQL NULL —
+        // which is a different thing from an empty string, and the database
+        // tells the two apart.
         m_valores[static_cast<size_t>(pos) - 1] = v ? MySqlCliente::Citar(v) : std::string("NULL");
         m_ligado[static_cast<size_t>(pos) - 1]  = true;
         return true;
@@ -186,11 +191,11 @@ public:
     bool Vivo() const override { return m_c.Conectado(); }
     bool Reconectar() override;
 
-    // Chamada de OUTRA thread, só no desligamento. Ver MySqlCliente::Interromper
-    // para o porquê de shutdown() e não close(): fechar o descritor daqui, com
-    // a thread escritora ainda dentro de um recv(), põe o SO livre para
-    // reaproveitar o número — e os outros sockets deste processo são os do
-    // servidor de jogo.
+    // Called from ANOTHER thread, only at shutdown. See
+    // MySqlCliente::Interromper for why shutdown() and not close(): closing the
+    // descriptor from here, with the writer thread still inside a recv(),
+    // leaves the OS free to reuse the number — and the other sockets in this
+    // process belong to the game server.
     void Interromper() override { m_c.Interromper(); }
 
     bool Executar(const char* sql) override;
@@ -231,9 +236,9 @@ void BancoMysql::Registrar(const char* fmt, ...)
     m_log(buf);
 }
 
-// O diagnóstico do cliente (versão do servidor, método de autenticação, custo
-// do RSA) vai para o mesmo log do plugin. Sem isso, "por que a conexão demorou
-// 4 s?" não tem resposta na máquina do dono.
+// The client's diagnostics (server version, authentication method, RSA cost)
+// go into the plugin's own log. Without that, "why did the connection take
+// 4 s?" has no answer on the owner's machine.
 void PonteDeLog(void* ctx, const char* linha)
 {
     BancoMysql* b = static_cast<BancoMysql*>(ctx);
@@ -257,10 +262,10 @@ bool BancoMysql::Conectar()
 
 bool BancoMysql::Abrir()
 {
-    // A dica é montada aqui porque ela cita o banco e o usuário DESTE dono de
-    // servidor. Mensagem de erro genérica ("permissao negada") faz quem não é
-    // programador abrir um tíquete; mensagem com o comando pronto faz ele
-    // resolver sozinho.
+    // The hint is built here because it names THIS server owner's database and
+    // user. A generic error message ("permission denied") makes a non-programmer
+    // open a ticket; a message with the command ready to paste lets them fix it
+    // themselves.
     {
         char b[700];
         std::snprintf(b, sizeof(b),
@@ -370,16 +375,16 @@ bool ComandoMysql::Consultar(FnLinha fn, void* ctx)
     m_mudancas = static_cast<int64_t>(m_b->C().LinhasAfetadas());
     return true;
 }
-}   // namespace anônimo
+}   // anonymous namespace
 
 std::unique_ptr<IBanco> CriarBancoMysql(const ConfigBanco& cfg, FnLog log)
 { return std::unique_ptr<IBanco>(new BancoMysql(cfg, log)); }
 
-// ── exposta só para o teste calibrar a substituição ─────────────────────────
+// ── exposed purely so the test can calibrate the substitution ───────────────
 //
-// Guarda nova precisa de prova dos DOIS lados: que ela recusa o que tem de
-// recusar e que aceita o que tem de aceitar. Sem esta porta, o substituidor
-// só seria exercitado de forma indireta e o "0 defeitos" não valeria nada.
+// A new guard needs proof from BOTH sides: that it refuses what it must refuse
+// and accepts what it must accept. Without this door, the substituter would
+// only be exercised indirectly and "0 defects" would be worth nothing.
 bool SubstituirMarcadoresParaTeste(const char* sql,
                                    const std::vector<std::string>& valoresJaCitados,
                                    const std::vector<bool>& ligado,

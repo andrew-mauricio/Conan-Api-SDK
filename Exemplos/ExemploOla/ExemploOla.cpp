@@ -1,84 +1,86 @@
 // ============================================================================
-//  ExemploOla — o menor plugin possível que ainda PROVA que a API funciona
+//  ExemploOla — the smallest possible plugin that still PROVES the API works
 //
-//  Não é "hello world". Um hello world imprime um texto e não prova nada: ele
-//  imprimiria igual se cada offset desta API estivesse errado. Este plugin
-//  exercita os caminhos que a tabela oferece e IMPRIME O QUE LEU, para que
-//  qualquer pessoa confira contra o que o servidor mostra:
+//  This is not a "hello world". A hello world prints a line and proves nothing:
+//  it would print exactly the same if every offset in this API were wrong. This
+//  plugin exercises the paths the table offers and PRINTS WHAT IT READ, so that
+//  anyone can check it against what the server shows:
 //
-//     1. reflexão de pé + custo medido -> número no log, não estimativa
-//     2. achar classe por nome         -> tem de achar as do Conan, não só engine
-//     3. ler membro por offset         -> valor tem de ser plausível, não lixo
-//     4. hierarquia por nome           -> DescendeDe tem de bater com o esperado
-//     5. chamar função por nome        -> tem de responder o que se sabe de cor
-//     6. bitfield x função             -> duas fontes que não se conversam
+//     1. reflection up + measured cost -> a number in the log, not an estimate
+//     2. find a class by name          -> must find Conan's, not just engine ones
+//     3. read a member by offset       -> the value must be plausible, not junk
+//     4. hierarchy by name             -> DescendeDe must match what's expected
+//     5. call a function by name       -> must answer what we already know
+//     6. bitfield vs function          -> two sources that don't talk to each other
 //
-//  Copie esta pasta para começar o seu.
+//  Copy this folder to start your own.
 //
 //  ────────────────────────────────────────────────────────────────────────────
-//  O MODELO MUDOU: TABELA DE FUNÇÕES, NADA NOSSO DENTRO DO SEU BINÁRIO
+//  THE MODEL CHANGED: A FUNCTION TABLE, NOTHING OF OURS INSIDE YOUR BINARY
 //  ────────────────────────────────────────────────────────────────────────────
-//  Até 17/08/2026 este exemplo incluía `Conan/ConanSDK.h` e compilava 4.398
-//  linhas do NOSSO motor para dentro do DLL dele. Agora o único arquivo nosso
-//  que entra aqui é `Conan/ConanPluginApi.h` — 246 linhas de declaração pura —
-//  e o plugin não linka biblioteca nenhuma nossa. Tudo se chama por `g_api->`.
+//  This example used to include `Conan/ConanSDK.h` and compile thousands of
+//  lines of OUR runtime into its DLL. Now the only file of ours that takes part
+//  is `Conan/ConanPluginApi.h`, which is pure declaration, and the plugin links
+//  no library of ours at all. Everything is called through `g_api->`.
 //
-//  Por que isso importa PARA QUEM COPIA ESTE EXEMPLO (o porquê longo está no
-//  cabeçalho do ConanPluginApi.h): o seu compilador deixa de importar, porque
-//  a fronteira virou C puro; e um conserto no nosso motor não obriga você a
-//  recompilar, porque ele não mora mais dentro do seu binário.
+//  Why that matters TO WHOEVER COPIES THIS EXAMPLE (the long reasoning is in
+//  the header of ConanPluginApi.h): your compiler stops mattering, because the
+//  boundary became plain C; and a fix in our runtime doesn't force you to
+//  rebuild, because it no longer lives inside your binary.
 //
-//  COMPILAR
-//     ./compilar.sh          (gera ExemploOla.dll)
-//  INSTALAR
-//     copiar para  <servidor>/ConanSandbox/Binaries/Win64/Conan-Api/Plugins/
+//  BUILD
+//     ./compilar.sh          (produces ExemploOla.dll)
+//  INSTALL
+//     copy it to  <server>/ConanSandbox/Binaries/Win64/Conan-Api/Plugins/
 //
-//  A PASTA TEM HÍFEN: `Conan-Api`, nunca a grafia emendada.
-//  Até 17/08/2026 esta linha mandava copiar para a pasta SEM hífen — e o
-//  loader monta `<pasta do exe>\Conan-Api` + `\Plugins\*.dll`
-//  (loader/ConanLoader.cpp), com a API derivando Config/Dados/Logs do MESMO
-//  lugar (api/src/ConanApi.cpp, CaminhoRaiz). Quem seguia a instrução copiava
-//  o DLL para uma pasta que o loader NUNCA varre: o plugin não carregava e não
-//  havia uma linha de erro apontando a causa — o log só dizia "pasta de plugins
-//  vazia ou ausente" citando o OUTRO caminho, que o dono nem sabia que existia.
-//  Falha silenciosa no primeiro contato da comunidade com a API.
-//  O script plugins/conferir-caminhos.sh existe para isso não voltar.
+//  THE FOLDER HAS A HYPHEN: `Conan-Api`, never run together.
+//  This line used to say the folder WITHOUT the hyphen, and the loader builds
+//  `<exe folder>\Conan-Api` + `\Plugins\*.dll`, with the API deriving
+//  Config/Dados/Logs from the SAME place. Anyone following the instruction
+//  copied their DLL into a folder the loader NEVER scans: the plugin didn't
+//  load and there wasn't a line of error pointing at the cause. The log only
+//  said "plugin folder empty or missing", naming the OTHER path, which the
+//  owner didn't know existed. A silent failure on the community's first contact
+//  with the API. The script plugins/conferir-caminhos.sh exists so it doesn't
+//  come back.
 // ============================================================================
 #include "Conan/ConanPluginApi.h"
 #include <windows.h>
 #include <stdint.h>
 
-// A tabela chega uma vez, em ConanPluginCarregar, e vale pela vida inteira do
-// processo: ela é um objeto estático do lado da API, nunca realocado. Guardar o
-// ponteiro num global é o padrão — e é o ÚNICO estado que este plugin tem.
+// The table arrives once, in ConanPluginCarregar, and stays valid for the whole
+// life of the process: it's a static object on the API's side, never
+// reallocated. Keeping the pointer in a global is the usual pattern — and it's
+// the ONLY state this plugin has.
 static const ConanApiTabela* g_api = nullptr;
 
-// ── atalhos para ChamarFuncao ───────────────────────────────────────────────
+// ── shortcuts for ChamarFuncao ──────────────────────────────────────────────
 //
-// `ChamarFuncao` é deliberadamente crua: vetor de ponteiros para os valores e
-// vetor de TAMANHOS. Não existe template `Call<T>` aqui, e é de propósito —
-// template é C++, e C++ não atravessa a fronteira entre o seu compilador e o
-// nosso (veja ConanPluginApi.h). O preço é escrever o tamanho na mão; o troco
-// é que a API confere esse tamanho contra o que a reflexão diz do parâmetro e
-// RECUSA a chamada quando não bate, em vez de corromper o bloco em silêncio.
-// Estas duas funções existem só para o resto do arquivo ficar legível.
+// `ChamarFuncao` is deliberately raw: an array of pointers to the values and an
+// array of SIZES. There's no `Call<T>` template here, and that's on purpose —
+// templates are C++, and C++ doesn't cross the boundary between your compiler
+// and ours (see ConanPluginApi.h). The price is writing the size by hand; the
+// change you get back is that the API checks that size against what reflection
+// says about the parameter and REFUSES the call when it doesn't match, instead
+// of quietly corrupting the block. These two functions exist only to keep the
+// rest of the file readable.
 static int ChamarII(void* obj, const char* nome, int32_t a, int32_t b, int32_t* saida)
 {
     const void*    args[2] = { &a, &b };
-    const uint32_t tams[2] = { 4, 4 };          // IntProperty: 4 bytes cada
+    const uint32_t tams[2] = { 4, 4 };          // IntProperty: 4 bytes each
     return g_api->ChamarFuncao(obj, nome, args, tams, 2, saida, sizeof(*saida));
 }
 
 static int ChamarDD(void* obj, const char* nome, double a, double b, double* saida)
 {
     const void*    args[2] = { &a, &b };
-    const uint32_t tams[2] = { 8, 8 };          // DoubleProperty: 8 bytes cada
+    const uint32_t tams[2] = { 8, 8 };          // DoubleProperty: 8 bytes each
     return g_api->ChamarFuncao(obj, nome, args, tams, 2, saida, sizeof(*saida));
 }
 
-// Nome do objeto para um buffer nosso. `NomeDoObjeto` devolve o próprio buffer,
-// então dá para usar direto no Log. std::string não cruza a fronteira C — por
-// isso o plugin é quem fornece a memória e quem sabe o tamanho dela.
+// The object's name into a buffer of ours. `NomeDoObjeto` returns that same
+// buffer, so it drops straight into Log. std::string doesn't cross the C
+// boundary — which is why the plugin supplies the memory and knows its size.
 static const char* Nome(void* obj, char* buf, int tam)
 {
     return g_api->NomeDoObjeto(obj, buf, tam);
@@ -86,47 +88,49 @@ static const char* Nome(void* obj, char* buf, int tam)
 
 static void Passo1_Reflexao()
 {
-    // ── o custo é MEDIDO, não estimado ──────────────────────────────────────
+    // ── the cost is MEASURED, not estimated ─────────────────────────────────
     //
-    // Uma revisão adversarial mediu que decodificar nome custava 7,66 us por
-    // objeto, porque cada nome disparava tres VirtualQuery (2.551 ns cada) sob
-    // Wine. Com 300 mil objetos, uma varredura passava de 2 SEGUNDOS — e um
-    // plugin que resolvesse identidade de jogador no laco do jogo travaria o
-    // servidor, com o sintoma "esta lento", que nao aponta para a causa.
+    // An adversarial review measured name decoding at 7.66 us per object,
+    // because every name fired three VirtualQuery calls (2,551 ns each) under
+    // Wine. At 300,000 objects a full sweep went past 2 SECONDS — and a plugin
+    // resolving player identity inside the game loop would hang the server,
+    // with "it's slow" as the symptom, which points at nothing.
     //
-    // Numero no log a cada arranque: comentario envelhece, medicao nao. O que
-    // a medicao mostra e o CACHE: a 1a resolucao paga a varredura, a 2a nao.
-    // Se um dia a 2a chamada custar o mesmo que a 1a, o cache morreu — e isso
-    // aparece aqui antes de aparecer como "servidor lento".
+    // A number in the log on every boot: comments age, measurements don't. What
+    // the measurement shows is the CACHE: the 1st resolution pays for the
+    // sweep, the 2nd doesn't. If the 2nd call ever costs what the 1st did, the
+    // cache is dead — and it shows up here before it shows up as "slow
+    // server".
     DWORD t0 = GetTickCount();
     void* cdo = g_api->GetDefaultObject("KismetMathLibrary");
     const DWORD d1 = GetTickCount() - t0;
 
     t0 = GetTickCount();
-    cdo = g_api->GetDefaultObject("KismetMathLibrary");        // 2a vez: cache
+    cdo = g_api->GetDefaultObject("KismetMathLibrary");        // 2nd time: cache
     const DWORD d2 = GetTickCount() - t0;
 
     g_api->Log("[1] GetDefaultObject: 1a chamada %lu ms · 2a (cache) %lu ms  %s",
                d1, d2, cdo ? "" : "(NAO ACHOU)");
 
-    // ── o que este passo NAO consegue mais medir, e por que ─────────────────
+    // ── what this step can no longer measure, and why ───────────────────────
     //
-    // A versao anterior imprimia `NumObjects()` (quantos objetos vivos ha no
-    // GUObjectArray) e cronometrava `FindObjects("Actor", ...)`. Nenhuma das
-    // duas existe na tabela: ela nao expoe VARREDURA do array de objetos, so
-    // busca de UM objeto por nome (`FindObject`). Nao ha como substituir isso
-    // por outra funcao da tabela — entao este exemplo deixou de medir, e diz
-    // que deixou, em vez de imprimir um numero parecido que nao mede a mesma
-    // coisa. Numero errado com cara de certo e pior do que numero nenhum.
+    // The previous version printed `NumObjects()` (how many live objects the
+    // GUObjectArray holds) and timed `FindObjects("Actor", ...)`. Neither of
+    // those exists in the table: it exposes no SWEEP of the object array, only
+    // a lookup of ONE object by name (`FindObject`). There's no other table
+    // function to stand in for it — so this example stopped measuring, and says
+    // so, rather than printing a similar-looking number that measures something
+    // else. A wrong number wearing the face of a right one is worse than no
+    // number.
     g_api->Log("    (contagem de objetos e varredura por classe nao existem na"
                " tabela — este passo mede so o custo da resolucao por nome)");
 }
 
 static void Passo2_Classes()
 {
-    // Achar classe da ENGINE não prova quase nada — toda API de UE acha Actor.
-    // O que prova é achar as classes DO CONAN: elas só existem se o catálogo
-    // veio da reflexão deste jogo.
+    // Finding an ENGINE class proves next to nothing — every UE API finds
+    // Actor. What proves something is finding CONAN's classes: they only exist
+    // if the catalogue came from this game's reflection.
     const char* alvos[] = { "ConanPlayerController", "ConanCharacter",
                             "ConanGameMode", "Actor", "PlayerController" };
     for (const char* n : alvos)
@@ -138,19 +142,21 @@ static void Passo2_Classes()
 
 static void Passo3_Membros()
 {
-    // Ler membro de um objeto REAL. Se o offset estivesse errado, sairia lixo —
-    // e lixo é visível: contagem negativa, número gigante, ponteiro absurdo.
+    // Read a member off a REAL object. If the offset were wrong, junk would
+    // come out — and junk is visible: a negative count, a huge number, an
+    // absurd pointer.
     void* o = g_api->FindObject("ConanPlayerController");
     if (!o) { g_api->Log("[3] nenhum ConanPlayerController no mundo (servidor vazio?)"); return; }
 
     char buf[256];
     g_api->Log("[3] %s", Nome(o, buf, sizeof(buf)));
 
-    // O offset vem do catálogo da reflexão (golden/, AConanPlayerController:
-    // CachedFollowerCount é IntProperty em +0x930), NUNCA de chute. `LerMembro`
-    // ainda passa o endereço pelo teste de legibilidade antes de tocar nele:
-    // objeto do jogo pode estar na janela do coletor de lixo, e ler ponteiro
-    // morto derruba o servidor inteiro.
+    // The offset comes from the reflection catalogue (golden/,
+    // AConanPlayerController: CachedFollowerCount is an IntProperty at +0x930),
+    // NEVER from a guess. `LerMembro` still puts the address through a
+    // readability test before touching it: a game object can be inside the
+    // garbage collector's window, and reading a dead pointer takes the whole
+    // server down.
     int32_t seguidores = 0;
     if (g_api->LerMembro(o, 0x930, &seguidores, sizeof(seguidores)))
         g_api->Log("    CachedFollowerCount (+0x930) = %d", seguidores);
@@ -166,10 +172,10 @@ static void Passo4_Hierarquia()
     char buf[256];
     g_api->Log("[4] GameMode: %s", Nome(o, buf, sizeof(buf)));
 
-    // `DescendeDe` percorre a cadeia de superclasses pelo nome. O par
-    // positivo/negativo é o que dá valor ao teste: uma implementação que
-    // respondesse "sim" para tudo passaria na primeira linha e falharia na
-    // segunda. Uma que respondesse "não" para tudo falha na primeira.
+    // `DescendeDe` walks the superclass chain by name. The positive/negative
+    // pair is what gives the test its value: an implementation answering "yes"
+    // to everything would pass the first line and fail the second. One
+    // answering "no" to everything fails the first.
     g_api->Log("    DescendeDe(Actor)                 = %s",
                g_api->DescendeDe(o, "Actor") ? "sim" : "nao");
     g_api->Log("    DescendeDe(ConanPlayerController) = %s   %s",
@@ -181,38 +187,39 @@ static void Passo4_Hierarquia()
 
 static void Passo5_ChamarFuncao()
 {
-    // ── A PROVA DE QUE ProcessEvent FUNCIONA ────────────────────────────────
+    // ── THE PROOF THAT ProcessEvent WORKS ───────────────────────────────────
     //
-    // Os passos 1 a 4 leem. Este ESCREVE parâmetros, chama código do jogo e
-    // confere o resultado — e é o único que não pode mentir.
+    // Steps 1 to 4 read. This one WRITES parameters, calls the game's code and
+    // checks the result — and it's the only one that can't lie.
     //
-    // As funções escolhidas são da biblioteca de matemática de Blueprint: puras,
-    // sem efeito colateral nenhum, e com resposta que se sabe de cor.
-    // Se os resultados baterem, TUDO isto está certo ao mesmo tempo:
+    // The functions chosen come from the Blueprint maths library: pure, no side
+    // effects at all, and with answers everybody knows by heart. If the results
+    // match, ALL of this is right at the same time:
     //
-    //    · a UFunction foi achada percorrendo a hierarquia pelo nome;
-    //    · os dois parâmetros foram escritos nos offsets que a reflexão deu;
-    //    · ProcessEvent estava mesmo no índice 79 da vtable;
-    //    · o retorno foi lido no offset certo do bloco de parâmetros;
-    //    · e a travessia plugin -> tabela -> motor não embaralhou nada.
+    //    · the UFunction was found by walking the hierarchy by name;
+    //    · both parameters were written at the offsets reflection gave;
+    //    · ProcessEvent really was at vtable index 79;
+    //    · the return value was read at the right offset of the parameter block;
+    //    · and the crossing plugin -> table -> runtime scrambled nothing.
     //
-    // Qualquer um desses errado e o resultado não é 12 — é lixo, ou zero, ou o
-    // servidor cai. Não existe como passar por acidente.
+    // Get any one of those wrong and the result isn't 12 — it's junk, or zero,
+    // or the server goes down. There's no way to pass by accident.
     void* mat = g_api->GetDefaultObject("KismetMathLibrary");
     if (!mat) { g_api->Log("[5] KismetMathLibrary nao encontrada"); return; }
 
-    // ── PRIMEIRO: um teste que NÃO é comutativo ─────────────────────────────
+    // ── FIRST: a test that is NOT commutative ───────────────────────────────
     //
-    // Isto conserta um furo real na prova anterior. `Add_IntInt(7,5)`,
-    // `Multiply_IntInt(6,7)` e `FMax(3.5, 9.25)` são todas COMUTATIVAS: dariam
-    // o mesmo resultado com os parâmetros trocados de lugar. Elas provam que a
-    // chamada acontece e que o retorno é lido — mas NÃO provam que A foi para o
-    // offset de A e B para o de B.
+    // This closes a real hole in the earlier proof. `Add_IntInt(7,5)`,
+    // `Multiply_IntInt(6,7)` and `FMax(3.5, 9.25)` are all COMMUTATIVE: they'd
+    // give the same result with the parameters swapped. They prove the call
+    // happens and the return value is read — but they do NOT prove that A went
+    // to A's offset and B to B's.
     //
-    // Subtração não perdoa: se a ordem inverter, 10-3=7 vira 3-10=-7. Um sinal
-    // trocado é um discriminante de um bit, impossível de confundir. E no
-    // modelo de tabela isso passou a cobrir mais chão: a ordem agora depende
-    // também de `args[]` chegar do outro lado da fronteira C na mesma ordem.
+    // Subtraction doesn't forgive: flip the order and 10-3=7 becomes 3-10=-7. A
+    // flipped sign is a one-bit discriminator, impossible to mistake. And under
+    // the table model it covers more ground than it used to: the order now also
+    // depends on `args[]` arriving on the other side of the C boundary in the
+    // same order.
     int32_t sub = 0;
     ChamarII(mat, "Subtract_IntInt", 10, 3, &sub);
     g_api->Log("[5] Subtract_IntInt(10, 3) = %d   %s", sub,
@@ -220,7 +227,8 @@ static void Passo5_ChamarFuncao()
       : sub == -7 ? "<<< ERRADO: parametros INVERTIDOS (deu 3-10)"
                   : "<<< ERRADO (esperado 7)");
 
-    // Divisão idem, e com resto: 100/7 = 14 (inteiro). Invertido daria 0.
+    // Division likewise, and with a remainder: 100/7 = 14 (integer). Flipped
+    // it would give 0.
     int32_t div = 0;
     ChamarII(mat, "Divide_IntInt", 100, 7, &div);
     g_api->Log("[5] Divide_IntInt(100, 7) = %d   %s", div,
@@ -237,53 +245,53 @@ static void Passo5_ChamarFuncao()
     g_api->Log("[5] Multiply_IntInt(6, 7) = %d   %s", m,
         m == 42 ? "<<< CORRETO" : "<<< ERRADO (esperado 42)");
 
-    // negativo e zero pegam erro de sinal e de offset que positivo pequeno esconde
+    // negatives and zero catch sign and offset errors that a small positive hides
     int32_t n = 0;
     ChamarII(mat, "Add_IntInt", -100, 37, &n);
     g_api->Log("[5] Add_IntInt(-100, 37) = %d   %s", n,
         n == -63 ? "<<< CORRETO" : "<<< ERRADO (esperado -63)");
 
-    // ── O TAMANHO DO ARGUMENTO TEM DE SER O TAMANHO DA REFLEXÃO ─────────────
+    // ── THE ARGUMENT'S SIZE MUST BE REFLECTION'S SIZE ───────────────────────
     //
-    // Esta prova ATESTAVA COMO CORRETA uma chamada errada, até 17/08/2026. A
-    // linha era, no modelo antigo:
+    // This proof CERTIFIED A WRONG CALL AS CORRECT until 2026-08-17. Under the
+    // old model the line read:
     //
-    //     float fm = mat->Call<float>("FMax", 3.5f, 9.25f);   // ERRADO
+    //     float fm = mat->Call<float>("FMax", 3.5f, 9.25f);   // WRONG
     //
-    // e o log do servidor imprimia `FMax(3.5, 9.25) = 9.2500  <<< CORRETO`.
+    // and the server log printed `FMax(3.5, 9.25) = 9.2500  <<< CORRETO`.
     //
-    // A reflexão DESTA build (golden/funcoes.json, KismetMathLibrary::FMax)
-    // diz que a função é toda em DoubleProperty, parmssize 24:
+    // THIS build's reflection (golden/funcoes.json, KismetMathLibrary::FMax)
+    // says the function is DoubleProperty throughout, parmssize 24:
     //     A  off=0 size=8 · B  off=8 size=8 · ReturnValue off=16 size=8
     //
-    // O template copiava `sizeof(T)` bytes no offset do parâmetro. Com `3.5f`
-    // isso são 4 bytes num slot de 8: a metade alta fica zerada e o jogo recebe
-    // um DENORMAL. Conferido byte a byte, com a mesma aritmética:
-    //     3.5f  no slot de double -> 5,336073e-315
-    //     9.25f no slot de double -> 5,394356e-315
+    // The template copied `sizeof(T)` bytes to the parameter's offset. With
+    // `3.5f` that's 4 bytes into an 8-byte slot: the high half stays zeroed and
+    // the game receives a DENORMAL. Checked byte by byte, same arithmetic:
+    //     3.5f  in a double slot -> 5.336073e-315
+    //     9.25f in a double slot -> 5.394356e-315
     //
-    // O 9.25 saía no log por ACIDENTE ARITMÉTICO: com a metade alta zerada, a
-    // ordem desses denormais espelha a ordem dos padrões de bits dos floats
-    // POSITIVOS. FMax escolhia o operando certo pelo motivo errado, e o retorno
-    // era lido de volta nos 4 bytes baixos. Os três casos que a prova antiga
-    // escolheu — 3.5/9.25, 2.0/1.0, 100.0/0.5 — eram todos positivos: passavam
-    // todos, por acaso, e o sentinela 0xCD não pega nada disso (a função
-    // EXECUTOU; ela só recebeu outros números).
+    // The 9.25 came out in the log by ARITHMETIC ACCIDENT: with the high half
+    // zeroed, the order of those denormals mirrors the order of the bit
+    // patterns of POSITIVE floats. FMax picked the right operand for the wrong
+    // reason, and the return value was read back out of the low 4 bytes. The
+    // three cases the old proof chose — 3.5/9.25, 2.0/1.0, 100.0/0.5 — were all
+    // positive: they all passed, by luck, and the 0xCD sentinel catches none of
+    // it (the function DID execute; it just got different numbers).
     //
-    // No modelo de tabela o tamanho deixou de ser deduzido do tipo do C++ e
-    // passou a ser DECLARADO (`tams[]`), e a API o confere contra a reflexão —
-    // veja o teste do guarda logo abaixo. Mas declarar continua sendo você quem
-    // faz: `tams` = o que a reflexão diz, sempre. Aqui, 8 e 8.
+    // Under the table model the size stopped being deduced from the C++ type
+    // and became DECLARED (`tams[]`), with the API checking it against
+    // reflection — see the guard test just below. But declaring it is still on
+    // you: `tams` = whatever reflection says, always. Here, 8 and 8.
     double fm = 0.0;
     ChamarDD(mat, "FMax", 3.5, 9.25, &fm);
     g_api->Log("[5] FMax(3.5, 9.25) = %.6f  %s", fm,
         (fm > 9.2499 && fm < 9.2501) ? "<<< CORRETO" : "<<< ERRADO (esperado 9.25)");
 
-    // ── o caso que SEPARA — sem ele esta prova volta a aprovar o errado ──────
+    // ── the case that SEPARATES — without it this proof approves the wrong ──
     //
-    // Mesmo papel do Subtract_IntInt lá em cima: um discriminante de um bit. Com
-    // 8 bytes dá 3.5; com 4 bytes escritos num slot de 8 daria -1.0. Não há
-    // como os dois caminhos concordarem aqui.
+    // Same job as Subtract_IntInt above: a one-bit discriminator. With 8 bytes
+    // it gives 3.5; with 4 bytes written into an 8-byte slot it would give
+    // -1.0. There's no way for the two paths to agree here.
     double fneg = 0.0;
     ChamarDD(mat, "FMax", 3.5, -1.0, &fneg);
     g_api->Log("[5] FMax(3.5, -1.0) = %.6f  %s", fneg,
@@ -291,30 +299,31 @@ static void Passo5_ChamarFuncao()
       : (fneg > -1.0001 && fneg < -0.9999) ? "<<< ERRADO: veio -1.0 — argumento de 4 bytes num slot de 8"
                                            : "<<< ERRADO (esperado 3.5)");
 
-    // Negativo dos dois lados: pega o mesmo defeito por outro caminho, e pega
-    // também inversão de ordem. Certo = -2.5; com 4 bytes num slot de 8 vinha
-    // -7.25; com A e B trocados também daria -7.25 — por isso o de cima, que
-    // separa as duas causas, vem primeiro.
+    // Negative on both sides: catches the same defect by another route, and
+    // catches order inversion too. Right = -2.5; with 4 bytes in an 8-byte slot
+    // it came out -7.25; with A and B swapped it would also give -7.25 — which
+    // is why the one above, the one that separates the two causes, comes
+    // first.
     double fneg2 = 0.0;
     ChamarDD(mat, "FMax", -2.5, -7.25, &fneg2);
     g_api->Log("[5] FMax(-2.5, -7.25) = %.6f  %s", fneg2,
         (fneg2 > -2.5001 && fneg2 < -2.4999) ? "<<< CORRETO"
                                              : "<<< ERRADO (esperado -2.5)");
 
-    // ── e agora o GUARDA, que é o que o modelo novo acrescentou ─────────────
+    // ── and now the GUARD, which is what the new model added ────────────────
     //
-    // A chamada abaixo é o defeito de 17/08 escrito de propósito: 4 bytes onde
-    // a reflexão pede 8. No modelo antigo isso rodava e mentia. Aqui tem de ser
-    // RECUSADA, com o motivo no log e o retorno intocado — e é isso que esta
-    // linha prova. Um plugin que copie este exemplo herda a proteção, não o
-    // defeito.
+    // The call below is the 2026-08-17 defect written on purpose: 4 bytes where
+    // reflection asks for 8. Under the old model it ran and lied. Here it has
+    // to be REFUSED, with the reason in the log and the return value untouched
+    // — and that's what this line proves. A plugin copying this example
+    // inherits the protection, not the defect.
     //
-    // É seguro: nada é executado quando a chamada é recusada. A linha
-    // "RECUSADO" que vai aparecer no log LOGO ABAIXO é esperada.
+    // It's safe: nothing executes when the call is refused. The "RECUSADO" line
+    // about to appear in the log JUST BELOW is expected.
     g_api->Log("[5] proposital: FMax com tams=4 (a proxima linha RECUSADO e esperada)");
     const float  fa = 3.5f, fb = -1.0f;
     const void*    args[2] = { &fa, &fb };
-    const uint32_t tams[2] = { 4, 4 };          // ERRADO de proposito
+    const uint32_t tams[2] = { 4, 4 };          // WRONG on purpose
     double lixo = 12345.0;
     const int passou = g_api->ChamarFuncao(mat, "FMax", args, tams, 2, &lixo, sizeof(lixo));
     g_api->Log("    ChamarFuncao devolveu %d, retorno %s   %s",
@@ -326,39 +335,40 @@ static void Passo5_ChamarFuncao()
 
 static void Passo6_BitfieldERetornoZero()
 {
-    // ── DUAS CORREÇÕES PROVADAS DE UMA VEZ, POR FONTES QUE NÃO SE CONVERSAM ──
+    // ── TWO FIXES PROVED AT ONCE, BY SOURCES THAT DON'T TALK TO EACH OTHER ──
     //
-    // 1. BITFIELD: `bActorEnableCollision` é o bit 0x02 do byte 0x6D (109) do
-    //    Actor. No MESMO byte moram `bActorIsBeingDestroyed` (0x04) e
-    //    `bAsyncPhysicsTickEnabled` (0x80). Ler o byte inteiro como bool
-    //    respondia "true" quando qualquer um dos vizinhos estava ligado — por
-    //    isso a tabela expõe `LerBit(obj, offset, mascara)` e não só LerMembro.
+    // 1. BITFIELD: `bActorEnableCollision` is bit 0x02 of byte 0x6D (109) on
+    //    Actor. The SAME byte houses `bActorIsBeingDestroyed` (0x04) and
+    //    `bAsyncPhysicsTickEnabled` (0x80). Reading the whole byte as a bool
+    //    answered "true" whenever any neighbour was set — which is why the
+    //    table exposes `LerBit(obj, offset, mask)` and not just LerMembro.
     //
-    // 2. RETORNO NO OFFSET 0: `GetActorEnableCollision()` não tem argumentos,
-    //    então o valor de retorno mora no offset 0 do bloco de parâmetros. A
-    //    versão anterior exigia offset > 0 para reconhecer um retorno, e
-    //    devolvia `false` para TODA função sem argumentos — inclusive
-    //    IsAdmin(). Sem erro nenhum.
+    // 2. RETURN AT OFFSET 0: `GetActorEnableCollision()` takes no arguments, so
+    //    its return value lives at offset 0 of the parameter block. The
+    //    previous version required offset > 0 to recognise a return value, and
+    //    handed back `false` for EVERY argument-less function — IsAdmin()
+    //    included. With no error whatsoever.
     //
-    // O teste: para cada Actor que se consiga alcançar, o bit e a função têm de
-    // concordar. Duas rotas independentes até o mesmo fato — leitura direta de
-    // memória de um lado, execução de código do jogo do outro.
+    // The test: for every Actor we can reach, the bit and the function have to
+    // agree. Two independent routes to the same fact — a direct memory read on
+    // one side, the game's own code executing on the other.
     //
-    // ── O QUE ESTE PASSO PERDEU AO MIGRAR, E POR QUE NÃO FOI DISFARÇADO ─────
+    // ── WHAT THIS STEP LOST IN THE MIGRATION, AND WHY IT ISN'T DISGUISED ────
     //
-    // A versão anterior varria 400 Actors com `FindObjects("Actor", ...)` e
-    // exigia VARIAÇÃO no conjunto — se todos tivessem o mesmo valor, dois
-    // códigos errados que sempre respondem "false" também passariam. E usava
-    // `UltimaChamadaExecutou()` para separar "a função respondeu false" de "a
-    // chamada foi FILTRADA pelo ProcessEvent" (template de Blueprint, CDO,
-    // Actor não inicializado) — ausência de resultado não é resultado.
+    // The previous version swept 400 Actors with `FindObjects("Actor", ...)`
+    // and demanded VARIATION across the set — if they all held the same value,
+    // two wrong implementations that always answer "false" would pass too. And
+    // it used `UltimaChamadaExecutou()` to tell "the function answered false"
+    // apart from "the call was FILTERED by ProcessEvent" (a Blueprint template,
+    // a CDO, an uninitialised Actor) — an absent result is not a result.
     //
-    // NENHUMA DAS DUAS existe na tabela. Sem varredura, o conjunto aqui são os
-    // poucos Actors alcançáveis por nome; sem o sinal de execução, um "false"
-    // pode ser resposta ou pode ser filtro. Consequência honesta: este passo
-    // deixou de ser conclusivo e passou a ser observacional. Ele imprime o que
-    // viu e diz que não separa — em vez de manter o veredito antigo em cima de
-    // uma base que encolheu, que é exatamente como um teste vira carimbo.
+    // NEITHER of those exists in the table. With no sweep, the set here is the
+    // handful of Actors reachable by name; with no execution signal, a "false"
+    // might be an answer or might be a filter. The honest consequence: this
+    // step stopped being conclusive and became observational. It prints what it
+    // saw and says it can't separate the two — rather than keeping the old
+    // verdict on top of a base that shrank, which is exactly how a test turns
+    // into a rubber stamp.
     static const char* const alvos[] = {
         "ConanPlayerController", "ConanCharacter", "ConanGameMode",
         "PlayerController", "WorldSettings", "GameStateBase", "Actor"
@@ -373,19 +383,20 @@ static void Passo6_BitfieldERetornoZero()
     {
         void* o = g_api->FindObject(alvo);
         if (!o) continue;
-        // O offset 0x6D só faz sentido em AActor. Sem esta linha, um objeto que
-        // não é Actor faria ler um byte qualquer e o placar contaria lixo.
+        // Offset 0x6D only means anything on an AActor. Without this line, a
+        // non-Actor object would have us read some arbitrary byte and the
+        // tally would count junk.
         if (!g_api->DescendeDe(o, "Actor")) continue;
 
-        // FindObject por nomes diferentes pode devolver o MESMO objeto (o
-        // primeiro ConanPlayerController também é um PlayerController). Contar
-        // duas vezes o mesmo Actor infla o placar sem acrescentar evidência.
+        // FindObject under different names can return the SAME object (the
+        // first ConanPlayerController is also a PlayerController). Counting
+        // one Actor twice inflates the tally without adding evidence.
         bool repetido = false;
         for (int i = 0; i < nvistos; ++i) if (vistos[i] == o) { repetido = true; break; }
         if (repetido) continue;
         if (nvistos < 16) vistos[nvistos++] = o;
 
-        const int antes = g_api->LerBit(o, 0x6D, 0x02);          // bit 0x02 do byte 109
+        const int antes = g_api->LerBit(o, 0x6D, 0x02);          // bit 0x02 of byte 109
 
         uint8_t ret = 0;
         const int chamou = g_api->ChamarFuncao(o, "GetActorEnableCollision",
@@ -402,8 +413,8 @@ static void Passo6_BitfieldERetornoZero()
         else
         {
             ++discorda;
-            // Identificar QUEM discorda. Estatística agregada não diz o que
-            // fazer com "1 em 7"; o nome do objeto diz.
+            // Name WHO disagrees. An aggregate statistic doesn't tell you
+            // what to do with "1 in 7"; the object's name does.
             g_api->Log("    DIVERGE: %s  · bit=%s funcao=%s",
                        Nome(o, buf, sizeof(buf)), antes ? "true" : "false",
                        fn ? "true" : "false");
@@ -430,23 +441,23 @@ static void Passo6_BitfieldERetornoZero()
                    " concordam, COM variacao no conjunto");
 }
 
-// ── o contrato ──────────────────────────────────────────────────────────────
+// ── the contract ────────────────────────────────────────────────────────────
 //
-// O carregador procura esta função pelo nome e passa a tabela. Sem ela, a DLL
-// é carregada e nada acontece.
+// The loader looks this function up by name and hands over the table. Without
+// it, the DLL loads and nothing happens.
 extern "C" __declspec(dllexport)
 void ConanPluginCarregar(const ConanApiTabela* api)
 {
-    // ── esta conferência não é formalidade ──────────────────────────────────
+    // ── this check is not a formality ───────────────────────────────────────
     //
-    // Se este plugin for compilado contra uma tabela MAIOR do que a que o
-    // servidor tem (API mais velha do que o plugin), todo campo depois do fim
-    // da struct real é memória de outra coisa — e chamar um "ponteiro de
-    // função" lido dali derruba o servidor num lugar sem nenhuma relação com a
-    // causa. `tamanho` é o único jeito de saber isso ANTES de tocar em algo.
+    // If this plugin is compiled against a table BIGGER than the one the server
+    // has (an API older than the plugin), every field past the end of the real
+    // struct is somebody else's memory — and calling a "function pointer" read
+    // from there takes the server down somewhere with no relation to the cause.
+    // `tamanho` is the only way to know that BEFORE touching anything.
     //
-    // Não dá para logar o motivo: `Log` é justamente um dos campos em que não
-    // se pode confiar aqui. Sair calado é o certo.
+    // There's no logging the reason: `Log` is precisely one of the fields you
+    // can't trust here. Leaving quietly is the right move.
     if (!api || api->tamanho < sizeof(ConanApiTabela)) return;
     g_api = api;
 
@@ -470,9 +481,9 @@ void ConanPluginCarregar(const ConanApiTabela* api)
     g_api->Log("== fim ==");
 }
 
-// Opcional. Chamada quando o servidor desce de forma limpa. Este plugin não
-// registra hook nem thread, então não há nada para desfazer — mas soltar o
-// ponteiro deixa explícito que a tabela não vale mais depois daqui.
+// Optional. Called when the server shuts down cleanly. This plugin registers
+// no hook and no thread, so there's nothing to undo — but dropping the pointer
+// makes it explicit that the table is no longer valid past this point.
 extern "C" __declspec(dllexport)
 void ConanPluginDescarregar(void)
 {

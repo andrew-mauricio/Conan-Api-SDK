@@ -1,31 +1,32 @@
 // ============================================================================
-//  BancoSqlite.cpp — o meio que sempre existiu, agora atrás da interface
+//  BancoSqlite.cpp — the medium that was always here, now behind the interface
 //
-//  ESTA MUDANÇA É MECÂNICA DE PROPÓSITO. As chamadas sqlite3_* que estavam
-//  espalhadas pelo Armazem estão aqui, com os MESMOS argumentos, os MESMOS
-//  pragmas e a MESMA prova de que o WAL pegou. Nada de comportamento foi
-//  "melhorado de passagem": quem quiser conferir que o SQLite continua fazendo
-//  o que fazia compara este arquivo com o Armazem.cpp anterior, e não precisa
-//  ler mais nada.
+//  THIS CHANGE IS MECHANICAL ON PURPOSE. The sqlite3_* calls that were
+//  scattered through Armazem are here, with the SAME arguments, the SAME
+//  pragmas and the SAME proof that WAL took. No behaviour was "improved in
+//  passing": anyone wanting to check that SQLite still does what it did
+//  compares this file with the previous Armazem.cpp, and needs to read nothing
+//  else.
 //
-//  O QUE NÃO PODE SUMIR DAQUI (e por quê)
-//  --------------------------------------
-//  · WAL. O save do próprio jogo é SQLite em WAL, sob Wine, neste mesmo
-//    processo — é o caminho provado em produção pelo fabricante do jogo. Dá
-//    commit atômico e recuperação na abertura: queda no meio da escrita ou
-//    vale a transação inteira, ou não vale nada dela.
-//  · synchronous=FULL. Com NORMAL, queda de ENERGIA pode perder os últimos
-//    commits — o arquivo continua íntegro e o VIP comprado some. Escrita aqui
-//    é rara (poucas por hora), então o fsync é grátis na prática.
-//  · A PROVA de que o WAL pegou. Pedir não é obter: em sistema de arquivos sem
-//    mmap compartilhado o SQLite volta para "delete" em SILÊNCIO, e a garantia
-//    pela qual se escolheu SQLite deixa de existir sem ninguém ser avisado.
-//  · journal_size_limit. Sem teto o -wal cresce sem parar num servidor que fica
-//    meses no ar — e é o -wal que a lição do wipe deste projeto ensinou a não
-//    esquecer (apagar o .db sem apagar o -wal faz o dado RESSUSCITAR).
-//  · FULLMUTEX. A thread escritora e a thread de arranque tocam o mesmo handle.
-//    NOMUTEX seria mais rápido e exigiria provar que nunca há duas threads no
-//    handle — prova que uma futura mudança quebra em silêncio.
+//  WHAT MUST NOT DISAPPEAR FROM HERE (and why)
+//  -------------------------------------------
+//  · WAL. The game's own save is SQLite in WAL, under Wine, in this very
+//    process — it's the path the game's maker proved in production. It gives
+//    atomic commit and recovery on open: a crash mid-write either counts the
+//    whole transaction or none of it.
+//  · synchronous=FULL. With NORMAL, a POWER cut can lose the last commits — the
+//    file stays intact and the purchased VIP vanishes. Writing here is rare (a
+//    few an hour), so the fsync is free in practice.
+//  · THE PROOF that WAL took. Asking isn't getting: on a filesystem without
+//    shared mmap, SQLite falls back to "delete" SILENTLY, and the guarantee
+//    SQLite was chosen for stops existing with nobody being told.
+//  · journal_size_limit. With no cap the -wal grows without end on a server
+//    that stays up for months — and it's the -wal that this project's wipe
+//    lesson taught us not to forget (deleting the .db without deleting the -wal
+//    makes the data COME BACK).
+//  · FULLMUTEX. The writer thread and the startup thread touch the same handle.
+//    NOMUTEX would be faster and would need a proof that two threads are never
+//    on the handle — a proof a future change breaks in silence.
 // ============================================================================
 #include "Banco.h"
 #include "terceiros/sqlite3/sqlite3.h"
@@ -43,10 +44,10 @@ class LinhaSqlite : public ILinha
 public:
     explicit LinhaSqlite(sqlite3_stmt* st) : m_st(st) {}
     int Colunas() const override { return sqlite3_column_count(m_st); }
-    // Índice fora da faixa é comportamento INDEFINIDO no sqlite3_column_*; a
-    // barreira é aqui e não na documentação, porque um índice errado é erro de
-    // digitação normal e o preço dele não pode ser leitura fora dos limites
-    // dentro do processo do servidor de jogo.
+    // An out-of-range index is UNDEFINED behaviour in sqlite3_column_*; the
+    // barrier is here and not in the documentation, because a wrong index is an
+    // ordinary typo and its price can't be an out-of-bounds read inside the
+    // game server's process.
     const char* Texto(int c) const override
     {
         if (c < 0 || c >= sqlite3_column_count(m_st)) return nullptr;
@@ -94,9 +95,9 @@ public:
     void Fechar() override;
     bool Vivo() const override { return m_db != nullptr; }
 
-    // Um arquivo local não "cai no meio". Se o handle existe, ele serve; se não
-    // existe, reabrir aqui esconderia o motivo de o Abrir ter falhado. Devolver
-    // o estado real é o certo — a camada de cima já sabe lidar com false.
+    // A local file doesn't "drop mid-way". If the handle exists it serves; if
+    // it doesn't, reopening here would hide why Abrir failed. Returning the
+    // real state is the right call — the layer above already handles false.
     bool Reconectar() override
     {
         if (m_db) return true;
@@ -104,23 +105,24 @@ public:
         return false;
     }
 
-    // Não há o que interromper: o sqlite é arquivo local e a operação mais
-    // longa daqui é um fsync. Nada aqui espera rede, então a thread escritora
-    // nunca fica presa por tempo que valha a pena cortar.
+    // There's nothing to interrupt: sqlite is a local file and the longest
+    // operation here is an fsync. Nothing here waits on a network, so the
+    // writer thread is never stuck for a time worth cutting short.
     //
-    // Não é "nada a fazer, então tanto faz": é a resposta CERTA deste meio, e
-    // ela está escrita para ninguém achar que faltou implementar. Fechar o
-    // handle daqui seria o oposto do pedido — sqlite3_close com statement em
-    // uso na outra thread devolve SQLITE_BUSY e deixa o banco meio fechado.
+    // This isn't "nothing to do, so whatever": it's this medium's RIGHT answer,
+    // and it's written down so nobody thinks the implementation is missing.
+    // Closing the handle from here would be the opposite of what was asked —
+    // sqlite3_close with a statement in use on the other thread returns
+    // SQLITE_BUSY and leaves the database half-closed.
     void Interromper() override {}
 
     bool Executar(const char* sql) override;
     bool Consultar(const char* sql, FnLinha fn, void* ctx) override;
     std::unique_ptr<IComando> Preparar(const char* sql) override;
 
-    // BEGIN IMMEDIATE, e não BEGIN: pega a trava de escrita JÁ, em vez de
-    // descobrir no primeiro INSERT que outro processo está escrevendo e ter de
-    // desfazer o que já leu.
+    // BEGIN IMMEDIATE, not BEGIN: it takes the write lock NOW, instead of
+    // finding out at the first INSERT that another process is writing and
+    // having to undo what it already read.
     bool Iniciar()   override { return Executar("BEGIN IMMEDIATE;"); }
     bool Confirmar() override { return Executar("COMMIT;"); }
     bool Desfazer()  override { return Executar("ROLLBACK;"); }
@@ -184,7 +186,7 @@ bool BancoSqlite::Abrir()
         return false;
     }
 
-    // Banco travado por outra coisa: esperar em vez de falhar.
+    // Database locked by something else: wait rather than fail.
     sqlite3_busy_timeout(m_db, 5000);
 
     char* err = nullptr;
@@ -204,7 +206,7 @@ bool BancoSqlite::Abrir()
     }
     sqlite3_free(err);
 
-    // A prova de que o WAL pegou. Ver o cabeçalho deste arquivo.
+    // The proof that WAL took. See this file's header.
     {
         sqlite3_stmt* st = nullptr;
         std::string modo;
@@ -280,10 +282,10 @@ std::unique_ptr<IComando> BancoSqlite::Preparar(const char* sql)
     return std::unique_ptr<IComando>(new ComandoSqlite(this, m_db, st));
 }
 
-// SQLITE_TRANSIENT: o SQLite COPIA a string agora. Com SQLITE_STATIC ele
-// guardaria o ponteiro, e quem liga um `std::string` temporário teria o texto
-// liberado embaixo antes do step. É o valor que o código anterior já usava nos
-// caminhos de escrita, e está mantido.
+// SQLITE_TRANSIENT: SQLite COPIES the string now. With SQLITE_STATIC it would
+// keep the pointer, and anyone binding a temporary `std::string` would have the
+// text freed underneath before the step. It's the value the previous code
+// already used on the write paths, and it's kept.
 bool ComandoSqlite::LigarTexto(int pos, const char* v)
 {
     const int rc = v ? sqlite3_bind_text(m_st, pos, v, -1, SQLITE_TRANSIENT)
@@ -303,8 +305,9 @@ bool ComandoSqlite::Executar()
 {
     m_mudancas = 0;
     sqlite3_reset(m_st);
-    // Um comando "sem resultado" que devolve linha (SELECT por engano) é lido
-    // até o fim; parar no meio deixaria a transação com um statement aberto.
+    // A "no result" command that returns rows (a SELECT by mistake) is read to
+    // the end; stopping halfway would leave the transaction with an open
+    // statement.
     int rc;
     while ((rc = sqlite3_step(m_st)) == SQLITE_ROW) {}
     if (rc != SQLITE_DONE) { m_b->GuardarErro("executar"); return false; }
@@ -322,7 +325,7 @@ bool ComandoSqlite::Consultar(FnLinha fn, void* ctx)
     if (rc != SQLITE_DONE) { m_b->GuardarErro("consultar"); return false; }
     return true;
 }
-}   // namespace anônimo
+}   // anonymous namespace
 
 std::unique_ptr<IBanco> CriarBancoSqlite(const ConfigBanco& cfg, FnLog log)
 { return std::unique_ptr<IBanco>(new BancoSqlite(cfg, log)); }

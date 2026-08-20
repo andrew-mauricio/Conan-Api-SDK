@@ -1,22 +1,22 @@
-// ExemploJogador — do "alguem falou" ate' o personagem daquele jogador.
+// ExemploJogador — from "somebody spoke" to that player's character.
 //
-// POR QUE ESTE EXEMPLO EXISTE
-// ---------------------------
-// O SDK ensinava a chamar funcao, a hookar, a montar texto e a consultar
-// permissao. Nao ensinava o pulo que TODO plugin util precisa dar:
+// WHY THIS EXAMPLE EXISTS
+// -----------------------
+// The SDK taught calling a function, hooking, building text and querying
+// permissions. It didn't teach the jump EVERY useful plugin has to make:
 //
-//     "alguem digitou !kit"  ->  QUEM foi?  ->  onde ele esta?  ->  age
+//     "somebody typed !kit"  ->  WHO was it?  ->  where are they?  ->  act
 //
-// Sem isso o dev tem 9.247 classes e nenhum caminho de entrada. Este arquivo e'
-// esse caminho, e ele cabe em vinte linhas.
+// Without that the developer has 9,247 classes and no way in. This file is that
+// way in, and it fits in twenty lines.
 //
-// TUDO POR NOME, NENHUM OFFSET GRAVADO
-// -------------------------------------
-// `OffsetDoMembro` resolve pela reflexao da build que estiver rodando. Gravar
-// 0x308 no binario funciona hoje e le' o campo vizinho depois do proximo patch
-// da Funcom — sem erro, sem log, so' com dado errado. O custo de resolver por
-// nome e' uma busca na primeira chamada; o custo de gravar o numero e' um
-// plugin que mente em silencio.
+// EVERYTHING BY NAME, NO OFFSET BAKED IN
+// --------------------------------------
+// `OffsetDoMembro` resolves against the reflection of whichever build is
+// running. Baking 0x308 into the binary works today and reads the neighbouring
+// field after Funcom's next patch — no error, no log, just wrong data. The cost
+// of resolving by name is one lookup on the first call; the cost of baking the
+// number in is a plugin that lies quietly.
 #include "Conan/ConanPluginApi.h"
 
 #include <cstdio>
@@ -24,25 +24,25 @@
 
 static const ConanApiTabela* g_api = nullptr;
 
-// ── ler um ponteiro de um membro, pelo NOME ────────────────────────────────
+// ── read a pointer member, BY NAME ─────────────────────────────────────────
 //
-// O padrao que se repete em todo plugin: resolve o offset uma vez, le' o
-// ponteiro, confere que ele e' legivel antes de devolver.
+// The pattern that repeats in every plugin: resolve the offset once, read the
+// pointer, check it's readable before handing it back.
 static void* MembroPonteiro(void* obj, const char* nome)
 {
     if (!obj) return nullptr;
     const int32_t off = g_api->OffsetDoMembro(obj, nome);
-    if (off < 0) return nullptr;                 // nao existe nesta build
+    if (off < 0) return nullptr;                 // doesn't exist on this build
 
     void* p = nullptr;
     if (g_api->LerMembro(obj, uint32_t(off), &p, sizeof(p)) <= 0) return nullptr;
-    // `Legivel` diz que a memoria esta MAPEADA, nao que o objeto esta vivo.
-    // Serve para recusar ponteiro obviamente invalido antes de tocar nele.
+    // `Legivel` says the memory is MAPPED, not that the object is alive. It's
+    // there to reject an obviously invalid pointer before touching it.
     if (!p || !g_api->Legivel(p, 8)) return nullptr;
     return p;
 }
 
-// ── quem falou, e onde ele esta ────────────────────────────────────────────
+// ── who spoke, and where they are ──────────────────────────────────────────
 extern "C" ConanAcao AoFalar(ConanChamada* c)
 {
     char texto[256];
@@ -51,11 +51,11 @@ extern "C" ConanAcao AoFalar(ConanChamada* c)
     if (std::strcmp(texto, "!ondeestou") != 0)
         return CONAN_CONTINUAR;
 
-    // 1. QUEM. Num hook, `c->Obj` e' o objeto que recebeu a chamada — aqui, o
-    //    ConanPlayerController de quem digitou.
+    // 1. WHO. In a hook, `c->Obj` is the object that received the call — here,
+    //    the ConanPlayerController of whoever typed.
     void* controller = c->Obj;
 
-    // 2. O NOME. Fica no PlayerState, nao no controller.
+    // 2. THE NAME. It lives on the PlayerState, not the controller.
     char nome[128] = "(desconhecido)";
     if (void* ps = MembroPonteiro(controller, "PlayerState"))
     {
@@ -63,14 +63,15 @@ extern "C" ConanAcao AoFalar(ConanChamada* c)
         if (off >= 0) g_api->LerTextoDoJogo(ps, uint32_t(off), nome, sizeof(nome));
     }
 
-    // 3. O PERSONAGEM. `Character` e' o pawn ja' tipado; `Pawn` serve quando a
-    //    classe nao for de personagem. Tentar os dois cobre os dois casos.
+    // 3. THE CHARACTER. `Character` is the already-typed pawn; `Pawn` covers
+    //    the case where the class isn't a character. Trying both covers both.
     void* corpo = MembroPonteiro(controller, "Character");
     if (!corpo) corpo = MembroPonteiro(controller, "Pawn");
 
-    // 4. A POSICAO. Pela funcao do jogo, nao pelo campo: `RelativeLocation` e'
-    //    replicado, e ler o campo cru pega o valor de antes da ultima
-    //    replicacao. A funcao percorre o caminho que o proprio jogo usa.
+    // 4. THE POSITION. Through the game's function, not the field:
+    //    `RelativeLocation` is replicated, and reading the raw field gets the
+    //    value from before the last replication. The function walks the path the
+    //    game itself uses.
     char msg[192];
     if (corpo)
     {
@@ -99,10 +100,10 @@ extern "C" ConanAcao AoFalar(ConanChamada* c)
     return CONAN_CANCELAR;
 }
 
-// ── e sem hook nenhum: varrer quem esta online ─────────────────────────────
+// ── and with no hook at all: sweep for who's online ────────────────────────
 //
-// O outro caminho de entrada. Serve para tarefa agendada, comando de admin, ou
-// qualquer coisa que nao comece com o jogador falando.
+// The other way in. Useful for a scheduled task, an admin command, or anything
+// that doesn't start with a player speaking.
 static void ListarOnline()
 {
     void* pcs[64];
@@ -132,8 +133,8 @@ void ConanPluginCarregar(const ConanApiTabela* api)
     g_api->Log(" ExemploJogador — do chat ate' o personagem");
     g_api->Log("=====================================================");
 
-    // Os offsets que este plugin usa, resolvidos AGORA para o log mostrar que
-    // vieram da reflexao e nao de constante gravada.
+    // The offsets this plugin uses, resolved NOW so the log shows they came
+    // from reflection and not from a baked-in constant.
     if (void* cdo = g_api->GetDefaultObject("ConanPlayerController"))
     {
         g_api->Log("   PlayerState  -> offset 0x%X (resolvido por nome)",

@@ -74,7 +74,7 @@
   #define CONAN_FOPEN(fh, caminho, modo)  do { (fh) = std::fopen((caminho), (modo)); } while (0)
 #endif
 
-// alloca mora em <malloc.h> no Windows (MSVC e MinGW) e em <alloca.h> no resto
+// alloca lives in <malloc.h> on Windows (both MSVC and MinGW), <alloca.h> elsewhere
 #if defined(_WIN32)
   #include <malloc.h>
   #define CONAN_ALLOCA(n) _alloca(n)
@@ -267,7 +267,7 @@ namespace ConanApi
     // The folder is created if missing. A plugin that fails for want of a folder
     // is a plugin that fails on half the installations.
     const char* CaminhoRaiz();                       // <Win64>/Conan-Api
-    const char* CaminhoConfig(const char* plugin);   // .../Config/<plugin>.json
+
     // ── paths: ONE FOLDER PER PLUGIN ────────────────────────────────────────
     //
     // Each plugin lives in Conan-Api\\Plugins\\<YourPlugin>\\ and keeps
@@ -285,7 +285,7 @@ namespace ConanApi
 
     // ── plugin registration ─────────────────────────────────────────────────
     // The loader calls this; the plugin needn't know how it was loaded.
-    void     Log(const char* fmt, ...);
+    // (`Log` is declared at the top of this namespace, before `Call` uses it.)
     bool     Pronta();          // did the anchors check out? only then is it safe to use
 
     // ── how much may be written starting at an offset in the block ──────────
@@ -353,14 +353,11 @@ namespace ConanApi
         return (fim > off) ? (fim - off) : 0u;
     }
 
-    // ── packing the arguments into the parameter block ──────────────────────
+    // ── TEXT AS AN ARGUMENT: the game allocates, we fill ────────────────────
     //
-    // Returns `false` when ANY argument didn't fit. The caller aborts the whole
-    // call: packing what worked and calling anyway would trade stack corruption
-    // for a zeroed argument, and the function would run and return a plausible
-    // false result, which is the defect this API exists to kill.
     // Builds an FString with the GAME's memory. 16 bytes: {wchar_t* Data; int32
-    // Num; int32 Max}. A plugin can never build this on its own.
+    // Num; int32 Max}. A plugin can never build this on its own — see the long
+    // note at the end of this file for what happens when it tries.
     bool CriarTextoDoJogo(const char* texto, void* destino16Bytes);
 
     // ── TEXT AS AN ARGUMENT ─────────────────────────────────────────────────
@@ -452,9 +449,12 @@ namespace ConanApi
     //
     //     char name[128];
     //     obj->GetStringAttribute(..., ConanApi::ParaForaTexto(name, sizeof(name)));
-    // Decodes the FString sitting in THIS slot into a plugin buffer. Declared
-    // here and implemented on the runtime side, where validated reads of game
-    // memory live.
+    //
+    // The decoder itself is `TextoDeSlot`, declared a few lines below, and
+    // implemented on the runtime side where validated reads of game memory live.
+
+    // ── the build check that finishes after the world is up ─────────────────
+    //
     // Redoes the part of the build check that was left pending at startup.
     // Called by the loader AFTER the world comes up: at startup the native
     // UFunctions don't exist yet, so that invariant would read "4 of 6" forever.
@@ -557,7 +557,7 @@ namespace ConanApi
     {
         T*   destino;
         int  capacidade;
-        int* quantos;      // recebe quantos couberam de verdade
+        int* quantos;      // receives how many actually fitted
         ForaLista(T* d, int cap, int& n) : destino(d), capacidade(cap), quantos(&n)
         { n = 0; }
     };
@@ -747,11 +747,6 @@ namespace ConanApi
         return ok && restoOk;
     }
 
-    // ── the call, with an optional typed return ────────────────────────────
-    //
-    //     pc->UnbanPlayer(id);                     // no return
-    //     float v = actor->GetDistanceTo<float>(o) // with a return
-    //
     // ── PACKING WITH OUTPUTS ────────────────────────────────────────────────
     //
     // Mirrors the Empacotar above, with one difference: when the argument is a
@@ -765,11 +760,10 @@ namespace ConanApi
     inline bool EmpacotarS(const FuncInfo*, const char*, uint8_t*, int,
                            SaidasPendentes*) { return true; }
 
-    // Text as an argument: the 16 bytes of the FString the GAME allocated go
-    // into the slot. The size is checked against reflection like any other — if
-    // the parameter isn't an FString, the call is refused instead of writing 16
-    // bytes into a 4-byte slot.
-    // FText in the slot — the same size check as Texto.
+    // FText in the slot: the 16 bytes the GAME allocated go straight in. The
+    // size is checked against reflection like any other argument — if the
+    // parameter isn't an FText, the call is refused instead of writing 16 bytes
+    // into a 4-byte slot.
     template<typename... R>
     inline bool Empacotar(const FuncInfo* fi, const char* nome, uint8_t* buf,
                           int i, const TextoRico& t, R&&... resto)
@@ -801,6 +795,7 @@ namespace ConanApi
         return ok && r;
     }
 
+    // The same, for FString.
     template<typename... R>
     inline bool Empacotar(const FuncInfo* fi, const char* nome, uint8_t* buf,
                           int i, const Texto& t, R&&... resto)
@@ -1356,6 +1351,7 @@ namespace ConanApi
     // descriptors. The ORDER is reflection's: the argument's index is the
     // parameter's index, and reordering here would write each value into its
     // neighbour's slot.
+    //
     // THE POSITIONS ARE REFLECTION'S, AND THAT ISN'T A DETAIL
     // --------------------------------------------------------
     // The runtime's function record indexes ALL parameters, inputs and outputs
@@ -1371,10 +1367,10 @@ namespace ConanApi
     {
         const void*  ent[MAX_PARMS];
         uint32_t     tam[MAX_PARMS];
-        int          nent = 0;        // = total de parametros vistos
+        int          nent = 0;        // = how many parameters we have seen
         ConanSaida   sai[MAX_PARMS];
         int          nsai = 0;
-        int          indice = 0;      // posicao na lista de parametros
+        int          indice = 0;      // position in the parameter list
 
         ColetaArgs()
         {
@@ -1391,7 +1387,7 @@ namespace ConanApi
         }
     };
 
-    // ── entrada comum ──────────────────────────────────────────────────────
+    // ── the ordinary input ─────────────────────────────────────────────────
     template<typename T>
     inline void ColetaUm(ColetaArgs& c, const T& v)
     {
@@ -1419,7 +1415,7 @@ namespace ConanApi
         ++c.indice;
     }
 
-    // ── saidas ─────────────────────────────────────────────────────────────
+    // ── the outputs ────────────────────────────────────────────────────────
     template<typename T>
     inline void ColetaUm(ColetaArgs& c, const Fora<T>& v)
     {
@@ -1637,7 +1633,6 @@ namespace ConanApi
         }
     }
 
-    // this build's anchors; regenerated on every game update
 // ── THE GAME BUILD, IN ONE PLACE ────────────────────────────────────────────
 //
 // The number used to be written by hand in the log message. When the build
@@ -1648,12 +1643,6 @@ namespace ConanApi
 // At 3am, that line is what someone uses to know which build the API was made
 // for. Saying the wrong number sends them to investigate the wrong place.
 #define CONAN_BUILD_DO_JOGO "24784646"
-
-
-    // ProcessEvent is virtual: it's called through the vtable, never by a fixed
-    // address. The index was elected by a test that approved 1 function out of
-    // 1,550.
-    constexpr int PROCESSEVENT_VTABLE_INDEX = 79;
 }
 
 // ── minimal engine types, only what the accessors need ─────────────────────
@@ -1679,7 +1668,7 @@ struct FVector          { double X, Y, Z; };     // UE5 uses double by default
 struct FRotator         { double Pitch, Yaw, Roll; };
 struct FVector2D        { double X, Y; };
 
-// ── PASSING TEXT TO THE GAME: NOT POSSIBLE by this route ────────────────────
+// ── PASSING TEXT TO THE GAME: why it goes through the API ───────────────────
 //
 // There used to be a `TextoParaOJogo` class here, which built an `FString`
 // pointing at a buffer of ours. It was REMOVED because it **crashes the
@@ -1690,7 +1679,8 @@ struct FVector2D        { double X, Y; };
 // `ConvertToAbsolutePath("test-api-xyz")` called through reflection, with the
 // FString built that way. The plugin's log dies on exactly that line:
 //
-//     [prova] === 1. passar FString PARA o jogo ===
+//     [prova] === 1. passar FString PARA o jogo ===   (the test's own log line,
+//                                                      quoted verbatim)
 //                                                   <- and the process ends
 //
 // WHY, AND WHY THERE IS NO SIMPLE FIX
@@ -1704,18 +1694,25 @@ struct FVector2D        { double X, Y; };
 // with memory that is not its own. Any buffer of ours passed as an FString
 // through reflection ends up in `FMemory::Free`.
 //
-// The correct path is allocating with the game's allocator
-// (`GMalloc`/`FMemory::Malloc`), and that requires locating the allocator on
-// this build — **not measured**. Until it is, the API does not offer the tool,
-// because offering it would be handing over a weapon pointed at the server of
-// whoever installs it.
+// The correct path is allocating with the game's allocator, and THAT IS WHAT
+// THE API NOW DOES. `ConanApi::Texto` and `ConanApi::TextoRico` (declared near
+// the top of this file) build the 16-byte value with the game's own memory, so
+// the destructor frees a pointer that really is the game's:
 //
-// WHAT TO DO IN THE MEANTIME
-// --------------------------
-// For a plugin to communicate: `ConanApi::Log()` (to file), or hook a function
-// that ALREADY receives text from the game and alter what passes through it —
-// there the FString is the game's, with the game's memory, and nobody frees
-// anything improperly.
+//     pc->Call<void>("ClientHUDShowNotification",
+//                    ConanApi::TextoRico("You have 250 points"),
+//                    bool(true), bool(false));
+//
+// Same idea for `FName`, one step further: `ConanApi::Nome` goes through the
+// game's own `Conv_StringToName`. Conan Shop answers players in production
+// through this path every day.
+//
+// WHAT A PLUGIN MUST NOT DO
+// -------------------------
+// Build the 16 bytes by hand and point them at its own buffer. That is the
+// removed class, and it still crashes for the same reason. If you need text to
+// cross into the game, it comes from `Texto`/`TextoRico`/`Nome` and from
+// nowhere else.
 //
 // This comment stays because the mistake is easy to repeat: the class compiled,
 // looked right, and the test took 90 seconds to bring the server down.
@@ -1792,14 +1789,14 @@ struct BitRef
     bool operator=(bool v) const { Set(v); return v; }
 };
 
-// ── raiz de tudo ────────────────────────────────────────────────────────────
+// ── the root of everything ──────────────────────────────────────────────────
 class UObject
 {
 public:
     // offsets measured against live reflection; confirmed by a second route
     // while disassembling the vtable, which reads +0x08 ObjectFlags,
     // +0x0C InternalIndex,
-    // +0x10 ClassPrivate, +0x18 NamePrivate e +0x20 Outer.
+    // +0x10 ClassPrivate, +0x18 NamePrivate and +0x20 Outer.
     FieldRef<UClass*> ClassPrivate() { return { this, 0x10 }; }
     FieldRef<FName>   NamePrivate()  { return { this, 0x18 }; }
     FieldRef<UObject*> OuterPrivate(){ return { this, 0x20 }; }
@@ -1849,5 +1846,5 @@ public:
     FieldRef<uint32_t> FunctionFlags() { return { this, 0xB0 }; }  // FUNC_Native = 0x400
     FieldRef<uint8_t>  NumParms()      { return { this, 0xB4 }; }  // 100% vs reflection
     FieldRef<uint16_t> ParmsSize()     { return { this, 0xB6 }; }  // 96.9% vs reflection
-    FieldRef<void*>    Func()          { return { this, 0xD8 }; }  // ponteiro nativo
+    FieldRef<void*>    Func()          { return { this, 0xD8 }; }  // native pointer
 };

@@ -1,54 +1,51 @@
 // ============================================================================
-//  ExemploAgendado — prova que um plugin consegue rodar SOZINHO, de tempo em
-//                    tempo, sem criar thread própria
+//  ExemploAgendado — proof that a plugin can run ON ITS OWN, every so often,
+//                    without creating a thread of its own
 //
-//  Antes disto, um plugin só rodava uma vez, no carregamento. Criar thread e
-//  chamar a API de lá é o caminho errado: a Unreal não é thread-safe, e o dano
-//  aparece longe da causa.
+//  Before this, a plugin only ran once, at load time. Spinning up a thread and
+//  calling the API from there is the wrong road: Unreal isn't thread-safe, and
+//  the damage shows up far from the cause.
 //
-//  A tarefa aqui roda de dentro do desvio de ProcessEvent — na mesma thread que
-//  a engine usa para tudo.
+//  The task here runs from inside the ProcessEvent detour — on the same thread
+//  the engine uses for everything.
 //
-//  A PROVA: cada disparo chama uma função do jogo e confere a resposta. Se a
-//  tarefa estivesse rodando na thread errada, ou o agendador estivesse
-//  disparando fora de um contexto válido, a chamada não devolveria 7.
+//  THE PROOF: each firing calls a game function and checks the answer. If the
+//  task were running on the wrong thread, or the scheduler were firing outside
+//  a valid context, the call wouldn't return 7.
 //
-//  Modelo de tabela: este arquivo não inclui nada nosso além do header de
-//  declarações, e não linka biblioteca nossa nenhuma. Tudo passa por `g_api->`.
+//  Table model: this file includes nothing of ours beyond the declaration
+//  header, and links no library of ours. Everything goes through `g_api->`.
 // ============================================================================
 #include "Conan/ConanPluginApi.h"
 #include <windows.h>
 
-// ── PROVAR QUE RODEI NA THREAD DO JOGO ──────────────────────────────────────
+// ── PROVING I RAN ON THE GAME'S THREAD ──────────────────────────────────────
 //
-// A versão anterior dizia "rodei na thread do jogo" porque Subtract(10,3) deu 7.
-// Isso não prova nada sobre THREAD: a conta daria 7 em qualquer thread. Era uma
-// afirmação com cara de prova, que é pior que nenhuma — o dev copia o exemplo e
-// acha que está verificando algo.
+// The previous version said "I ran on the game's thread" because Subtract(10,3)
+// came out 7. That proves nothing about THREADS: the sum is 7 on any of them.
+// It was a claim wearing a proof's face, which is worse than none — the
+// developer copies the example and thinks they're verifying something.
 //
-// O que prova de verdade: guardar o id da thread que executa um hook (essa é a
-// do jogo, por definição) e comparar com o id de dentro da tarefa agendada.
+// What actually proves it: capture the id of the thread that runs a hook (that
+// one is the game's, by definition) and compare it with the id from inside the
+// scheduled task.
 
-// O ponteiro da tabela é guardado em estático porque a tarefa agendada roda
-// muito depois do Carregar, sem receber a tabela de volta — o contexto que o
-// agendador devolve é NOSSO, e aqui não precisamos dele.
+// The table pointer is kept in a static because the scheduled task runs long
+// after Carregar, without being handed the table back — the context the
+// scheduler returns is OURS, and we don't need it here.
 static const ConanApiTabela* g_api = nullptr;
 
 static int   g_disparos = 0;
 static DWORD g_t0 = 0;
 
-// ── A PROVA DE THREAD, DE VERDADE ───────────────────────────────────────────
+// ── THE THREAD PROOF, FOR REAL ──────────────────────────────────────────────
 //
-// A versão original afirmava "rodei na thread do jogo" porque Subtract(10,3)
-// deu 7. Isso não prova NADA sobre thread: a conta dá 7 em qualquer uma. Era
-// afirmação com cara de prova — pior que nenhuma, porque o dev copia o exemplo
-// e acha que está verificando algo.
-//
-// O que prova: capturar o id da thread dentro de um HOOK. Hook de ProcessEvent
-// roda, por definição, na thread que executa o jogo. Se o id de dentro da
-// tarefa agendada for o MESMO, a promessa de AgendarNaThreadDoJogo está
-// cumprida; se for outro, está quebrada — e o log precisa gritar, porque um
-// plugin que toca no mundo fora da thread do jogo corrompe estado devagar.
+// What proves it: capture the thread id inside a HOOK. A ProcessEvent hook
+// runs, by definition, on the thread that runs the game. If the id inside the
+// scheduled task is the SAME, AgendarNaThreadDoJogo has kept its promise; if
+// it's a different one, the promise is broken — and the log has to shout,
+// because a plugin touching the world off the game's thread corrupts state
+// slowly.
 static volatile DWORD g_threadDoJogo = 0;
 static volatile DWORD g_candidata = 0;
 static volatile long  g_votos = 0;
@@ -56,14 +53,14 @@ static volatile long  g_votos = 0;
 extern "C" ConanAcao CapturarThread(ConanChamada* c)
 {
     (void)c;
-    // A THREAD DOMINANTE, NAO A PRIMEIRA — e esta distincao me custou uma
-    // conclusao errada em 19/08/2026. Gravar o primeiro evento que passa aqui
-    // parece razoavel e nao e': ProcessEvent e' chamado de VARIAS threads, e o
-    // primeiro pode vir de qualquer uma. Com isso eu "provei" que a API estava
-    // quebrada quando quem estava errado era o meu instrumento.
+    // THE DOMINANT THREAD, NOT THE FIRST — and that distinction cost a wrong
+    // conclusion on 2026-08-19. Recording the first event that comes through
+    // here looks reasonable and isn't: ProcessEvent is called from SEVERAL
+    // threads, and the first one can come from any of them. That's how the API
+    // got "proved" broken when the thing at fault was the instrument.
     //
-    // Conto e fico com a que mais aparece: a do game loop domina por ordens de
-    // grandeza (medido: 99,9%).
+    // So count, and keep whichever shows up most: the game loop's dominates by
+    // orders of magnitude (measured: 99.9%).
     const DWORD eu = GetCurrentThreadId();
     if (eu == g_candidata) { ++g_votos; }
     else if (g_votos == 0) { g_candidata = eu; g_votos = 1; }
@@ -74,18 +71,20 @@ extern "C" ConanAcao CapturarThread(ConanChamada* c)
 
 static void Tique(void* /*contexto*/)
 {
-    if (!g_api) return;   // não deve acontecer; a tarefa só é agendada com a tabela em mãos
+    if (!g_api) return;   // shouldn't happen; the task is only scheduled with the table in hand
 
     ++g_disparos;
     const DWORD dt = GetTickCount() - g_t0;
 
-    // Chamar função do jogo DE DENTRO da tarefa: é isto que prova a thread.
+    // Calling a game function FROM INSIDE the task: this is what proves the
+    // thread.
     //
-    // No modelo de tabela não existe mais `obj->Call<int32_t>(...)`: aquele
-    // template era código NOSSO compilado dentro do plugin. Agora os argumentos
-    // vão como vetor de ponteiros + vetor de tamanhos, e a API confere cada
-    // tamanho contra o parâmetro real antes de montar o bloco — passar 4 bytes
-    // onde o jogo espera 8 (ou o contrário) é recusado em vez de escrever lixo.
+    // Under the table model there's no `obj->Call<int32_t>(...)` any more: that
+    // template was OUR code compiled inside the plugin. Now the arguments go as
+    // an array of pointers plus an array of sizes, and the API checks each size
+    // against the real parameter before assembling the block — passing 4 bytes
+    // where the game wants 8 (or the reverse) gets refused instead of writing
+    // junk.
     void* mat = g_api->GetDefaultObject("KismetMathLibrary");
     int32_t r = -1;
     if (mat)
@@ -94,8 +93,8 @@ static void Tique(void* /*contexto*/)
         const void*    args[2] = { &a, &b };
         const uint32_t tams[2] = { (uint32_t)sizeof(a), (uint32_t)sizeof(b) };
         int32_t ret = 0;
-        // Devolve 1 se executou. Se recusar, `r` fica -1 e o log acusa ERRADO —
-        // silenciar a falha aqui destruiria justamente a prova.
+        // Returns 1 if it executed. On a refusal, `r` stays -1 and the log
+        // says ERRADO — silencing the failure here would destroy the proof.
         if (g_api->ChamarFuncao(mat, "Subtract_IntInt", args, tams, 2,
                                 &ret, (uint32_t)sizeof(ret)))
             r = ret;
@@ -110,7 +109,7 @@ static void Tique(void* /*contexto*/)
                r == 7 ? "<<< a chamada por reflexao funcionou" : "<<< ERRADO",
                (unsigned long long)total);
 
-    // A prova que o nome promete: MESMA thread do hook?
+    // The proof the name promises: the SAME thread as the hook?
     const DWORD minha = GetCurrentThreadId();
     if (!g_threadDoJogo)
         g_api->Log("[agendado] thread: ainda nao capturei a do jogo (nenhum evento "
@@ -132,10 +131,10 @@ static void Tique(void* /*contexto*/)
 extern "C" __declspec(dllexport)
 void ConanPluginCarregar(const ConanApiTabela* api)
 {
-    // A tabela pode ser MENOR que a que este plugin conhece se a API for mais
-    // velha que o binário. Ler campo além do fim dela devolveria lixo e nós
-    // chamaríamos um endereço qualquer — por isso a conferência vem antes de
-    // qualquer uso, inclusive antes do primeiro Log.
+    // The table can be SMALLER than the one this plugin knows if the API is
+    // older than the binary. Reading a field past its end would hand back junk
+    // and we'd call some arbitrary address — which is why the check comes
+    // before any use at all, including before the first Log.
     if (!api || api->tamanho < sizeof(ConanApiTabela)) return;
     g_api = api;
 
@@ -145,9 +144,10 @@ void ConanPluginCarregar(const ConanApiTabela* api)
     if (!g_api->Pronta()) { g_api->Log("  reflexao indisponivel"); return; }
 
     const uint32_t id =
- // Um hook em TUDO, só para capturar o id da thread do jogo. É barato
- // (devolve CONTINUAR na hora) e é a única forma honesta de ter com o
- // que comparar: sem base de comparação, a prova abaixo não prova.
+ // A hook on EVERYTHING, purely to capture the game thread's id. It's
+ // cheap (returns CONTINUAR straight away) and it's the only honest way
+ // to have something to compare against: with no baseline, the proof
+ // below proves nothing.
  g_api->HookProcessEventTudo(CapturarThread, 100);
  g_api->AgendarNaThreadDoJogo(Tique, 10, nullptr, 1);
     g_api->Log("  tarefa a cada 10 s -> id %u %s", id, id ? "" : "(NAO agendou)");

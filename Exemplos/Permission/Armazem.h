@@ -1,77 +1,81 @@
 // ============================================================================
-//  Armazem.h — o núcleo de dados do Permission
+//  Armazem.h — Permission's data core
 //
-//  DE PROPÓSITO NÃO DEPENDE DA ConanApi.
-//  Nem de <windows.h> do jogo, nem da reflexão, nem de UObject. Só SQLite e
-//  a biblioteca padrão. Isso não é pureza arquitetural: é o que permite
-//  compilar este mesmo código num .exe de teste e RODAR o teste sob Wine, sem
-//  servidor de Conan nenhum. Núcleo que só roda dentro do jogo é núcleo que só
-//  se testa em produção — e a regra aqui é a oposta: compilar não prova nada,
-//  só rodar prova.
+//  IT DELIBERATELY DOES NOT DEPEND ON ConanApi.
+//  Not on the game's <windows.h>, not on reflection, not on UObject. Only
+//  SQLite and the standard library. That isn't architectural purity: it's what
+//  lets this same code compile into a test .exe and RUN the test under Wine,
+//  with no Conan server at all. A core that only runs inside the game is a core
+//  that can only be tested in production — and the rule here is the opposite:
+//  compiling proves nothing, only running proves.
 //
-//  A DIVISÃO QUE MANDA EM TUDO
-//  --------------------------
-//  LEITURA acontece no laço do jogo. Não pode abrir arquivo, não pode alocar,
-//  não pode pegar trava que um escritor segure, não pode tocar em SQLite.
-//  Responde de um INSTANTÂNEO em memória, já resolvido (herança de grupo
-//  achatada), publicado por troca atômica de ponteiro.
+//  THE SPLIT THAT GOVERNS EVERYTHING
+//  ---------------------------------
+//  READING happens in the game loop. It may not open a file, may not allocate,
+//  may not take a lock a writer holds, may not touch SQLite. It answers from an
+//  in-memory SNAPSHOT, already resolved (group inheritance flattened),
+//  published by an atomic pointer swap.
 //
-//  ESCRITA acontece fora do laço, numa thread própria, e termina em COMMIT do
-//  banco. Quem chama `Conceder` volta na hora: a tarefa foi enfileirada.
-//  Depois do commit, um instantâneo novo é montado e publicado. Leitor nenhum
-//  espera por escritor nenhum, em momento nenhum.
+//  WRITING happens outside the loop, on a thread of its own, and ends in a
+//  database COMMIT. Whoever calls `Conceder` returns immediately: the task was
+//  queued. After the commit, a new snapshot is built and published. No reader
+//  ever waits on any writer, at any moment.
 //
-//  DOIS BANCOS, UMA LÓGICA (18/08/2026)
-//  ------------------------------------
-//  O "banco" deixou de ser SQLite direto e passou a ser Perm::IBanco (Banco.h):
-//  BancoSqlite (o padrão, arquivo local em WAL) ou BancoMysql (o dono aponta
-//  para um MySQL no config.json). A decisão — QUE dados guardar, como achatar
-//  herança, como pesar o casamento de nó — não sabe qual dos dois está embaixo.
+//  TWO DATABASES, ONE PIECE OF LOGIC (2026-08-18)
+//  ----------------------------------------------
+//  The "database" stopped being SQLite directly and became Perm::IBanco
+//  (Banco.h): BancoSqlite (the default, a local file in WAL) or BancoMysql (the
+//  owner points at a MySQL in config.json). The decision — WHAT data to store,
+//  how to flatten inheritance, how to weigh a node match — doesn't know which
+//  of the two is underneath.
 //
-//  E a divisão acima ficou MAIS importante, não menos: com MySQL, "escrita fora
-//  do laço" deixou de ser questão de gosto e virou a única coisa que separa um
-//  banco lento de um servidor de jogo travado. Nenhuma consulta de permissão
-//  toca no banco — nem no SQLite local.
+//  And the split above got MORE important, not less: with MySQL, "writing
+//  outside the loop" stopped being a matter of taste and became the only thing
+//  standing between a slow database and a frozen game server. No permission
+//  query touches the database — not even the local SQLite.
 //
 //  ╔══════════════════════════════════════════════════════════════════════════╗
-//  ║  O QUE ACONTECE QUANDO O BANCO DO DONO NÃO COLABORA (18/08/2026)         ║
+//  ║  WHAT HAPPENS WHEN THE OWNER'S DATABASE WON'T COOPERATE (2026-08-18)     ║
 //  ║                                                                          ║
-//  ║  Isto roda no servidor DOS OUTROS, configurado por gente que não         ║
-//  ║  programa. MySQL em host errado, porta fechada, senha trocada, banco     ║
-//  ║  inexistente, sem GRANT, caindo no meio da noite, 2 s por consulta —     ║
-//  ║  não são hipóteses, é a semana normal de quem hospeda servidor.          ║
+//  ║  This runs on OTHER PEOPLE'S servers, configured by people who don't     ║
+//  ║  write code. MySQL on the wrong host, a closed port, a changed           ║
+//  ║  password, a database that doesn't exist, no GRANT, dying in the middle  ║
+//  ║  of the night, 2 s per query — these aren't hypotheticals, they're a     ║
+//  ║  normal week for anyone hosting a server.                                ║
 //  ║                                                                          ║
-//  ║  INV-ARMAZEM-001 · O SERVIDOR DE JOGO NÃO PODE CAIR NEM TRAVAR POR       ║
-//  ║      CAUSA DO BANCO. Um MySQL fora do ar é problema do banco. Ponto.     ║
-//  ║      Camadas: leitura só do instantâneo · escrita em thread própria ·    ║
-//  ║      fila com teto · prazo em toda operação de rede · desligamento que   ║
-//  ║      interrompe operação presa.                                          ║
+//  ║  INV-ARMAZEM-001 · THE GAME SERVER MUST NOT CRASH OR FREEZE BECAUSE OF   ║
+//  ║      THE DATABASE. A MySQL that's down is the database's problem. Full   ║
+//  ║      stop. The layers: reads only from the snapshot · writes on their    ║
+//  ║      own thread · a capped queue · a timeout on every network operation  ║
+//  ║      · a shutdown that interrupts a stuck operation.                     ║
 //  ║                                                                          ║
-//  ║  INV-ARMAZEM-002 · BANCO INDISPONÍVEL = PERMISSION AUSENTE, NUNCA        ║
-//  ║      PERMISSION MENTINDO. Enquanto o banco escolhido no config.json      ║
-//  ║      nunca abriu, ConanPermissionObterApi devolve nullptr: para quem     ║
-//  ║      chama, é o mesmo que o plugin não estar instalado, e o              ║
-//  ║      ConanPermission.h já obriga cada plugin a declarar o `se_ausente`   ║
-//  ║      dele. Nada de cair para o SQLite local (INV-BANCO-006, em Banco.h): ║
-//  ║      gravar VIP em outro lugar é criar duas verdades irreconciliáveis.   ║
+//  ║  INV-ARMAZEM-002 · DATABASE UNAVAILABLE = PERMISSION ABSENT, NEVER       ║
+//  ║      PERMISSION LYING. While the database chosen in config.json has      ║
+//  ║      never opened, ConanPermissionObterApi returns nullptr: to a caller  ║
+//  ║      that's the same as the plugin not being installed, and              ║
+//  ║      ConanPermission.h already makes every plugin declare its own        ║
+//  ║      `se_ausente`. No falling back to the local SQLite (INV-BANCO-006,   ║
+//  ║      in Banco.h): writing VIP somewhere else creates two irreconcilable  ║
+//  ║      truths.                                                             ║
 //  ║                                                                          ║
-//  ║  INV-ARMAZEM-003 · FALHA NA PARTIDA NÃO É DEFINITIVA. O plugin fica      ║
-//  ║      CARREGADO e tenta de novo em segundo plano, com espera crescente e  ║
-//  ║      RELENDO o config.json a cada tentativa. Quando o dono corrigir a    ║
-//  ║      senha, criar o banco, dar o GRANT ou o container do MySQL           ║
-//  ║      terminar de subir, o Permission entra sozinho.                      ║
+//  ║  INV-ARMAZEM-003 · A FAILURE AT STARTUP IS NOT FINAL. The plugin stays   ║
+//  ║      LOADED and tries again in the background, with growing backoff and  ║
+//  ║      RE-READING config.json on every attempt. When the owner fixes the   ║
+//  ║      password, creates the database, issues the GRANT, or the MySQL      ║
+//  ║      container finishes coming up, Permission joins on its own.          ║
 //  ║                                                                          ║
-//  ║      POR QUE ISTO NÃO É LUXO: neste jogo, cada reinício do servidor      ║
-//  ║      abre 6 a 9 minutos em que NINGUÉM consegue entrar (medido; ver      ║
-//  ║      conan-restart-abre-janela-morta). "Reinicie o servidor" como preço  ║
-//  ║      de uma senha corrigida é caro demais para um erro de digitação —    ║
-//  ║      e o caso mais comum de todos (docker compose subindo o jogo antes   ║
-//  ║      do MySQL) se conserta sozinho em segundos.                          ║
+//  ║      WHY THIS ISN'T A LUXURY: in this game, every server restart opens   ║
+//  ║      a 6-to-9-minute window in which NOBODY can connect (measured). Ask  ║
+//  ║      "restart the server" as the price of a corrected password and       ║
+//  ║      that's far too expensive for a typo — and the most common case of   ║
+//  ║      all (docker compose bringing the game up before MySQL) fixes        ║
+//  ║      itself in seconds.                                                  ║
 //  ║                                                                          ║
-//  ║  INV-ARMAZEM-004 · BANCO FORA DO AR NÃO VIRA MEMÓRIA NEM DISCO SEM       ║
-//  ║      TETO. A fila de escrita tem teto e o log de falha tem freio. Sem    ║
-//  ║      isso, um banco lento derruba o servidor por consumo — o problema    ║
-//  ║      do banco virando problema do jogo por outro caminho.                ║
+//  ║  INV-ARMAZEM-004 · A DATABASE THAT'S DOWN DOESN'T TURN INTO UNBOUNDED    ║
+//  ║      MEMORY OR DISK. The write queue is capped and the failure log has   ║
+//  ║      a brake. Without that, a slow database takes the server down by     ║
+//  ║      consumption — the database's problem becoming the game's problem    ║
+//  ║      by another route.                                                   ║
 //  ╚══════════════════════════════════════════════════════════════════════════╝
 // ============================================================================
 #pragma once
@@ -91,56 +95,56 @@
 
 namespace Perm
 {
-    // Toda consulta tem TRÊS respostas. Ver ConanPermission.h para o porquê.
+    // Every query has THREE answers. See ConanPermission.h for why.
     enum Resposta : int32_t { NAO_SEI = -1, NEGADO = 0, PERMITIDO = 1 };
 
-    // Tem de casar com CONAN_PERM_MAX_ID do header público. Repetido aqui em vez
-    // de incluído porque este arquivo não depende do header público de propósito
-    // (o teste compila sem ele); Permission.cpp faz o static_assert que garante
-    // que as duas cópias não divergiram — duas cópias da mesma verdade divergem
-    // se ninguém conferir.
+    // Must match CONAN_PERM_MAX_ID from the public header. Repeated here
+    // instead of included because this file deliberately doesn't depend on the
+    // public header (the test compiles without it); Permission.cpp holds the
+    // static_assert that guarantees the two copies haven't drifted — two copies
+    // of the same truth drift if nobody checks.
     constexpr int MAX_ID = 64;
 
-    // Os outros dois tetos, pelo mesmo motivo e com o mesmo static_assert em
-    // Permission.cpp: CONAN_PERM_MAX_GRUPO e CONAN_PERM_MAX_NO.
+    // The other two caps, for the same reason and with the same static_assert
+    // in Permission.cpp: CONAN_PERM_MAX_GRUPO and CONAN_PERM_MAX_NO.
     constexpr int MAX_GRUPO = 64;
     constexpr int MAX_NO    = 128;
 
-    // Texto livre que só vai para o diário de auditoria ("quem" concedeu, nome
-    // de exibição do jogador). Não é chave de nada; o teto existe só para não
-    // haver entrada da ABI sem teto.
+    // Free text that only goes into the audit log (who granted it, the
+    // player's display name). It's a key to nothing; the cap exists only so
+    // there's no ABI input without one.
     constexpr int MAX_TEXTO = 256;
 
-    // ── entrada da ABI: `const char*` SEM comprimento ────────────────────────
+    // ── ABI input: a `const char*` with NO length ────────────────────────────
     //
-    // O DEFEITO QUE ISTO CONSERTA
-    // A ABI é de C e passa só o ponteiro (ConanPermission.h). Todas as entradas
-    // conferiam `!s || !*s` — o que pega ponteiro nulo e string vazia — e
-    // DEPOIS entregavam a string a código que caminha até o '\0':
-    // `Tabela::Hash` (`while (*s)`), `std::string::operator==(const char*)` em
-    // `Casa`, e `t.jogador = jogador` em `Conceder`. Um plugin mal escrito (não
-    // precisa ser malicioso) que passasse bytes sem terminador levava esse laço
-    // para fora do mapa, e a falha acontece na thread do jogo, FORA da guarda
-    // SEH do loader: mata o processo, não só o plugin.
+    // THE DEFECT THIS FIXES
+    // The ABI is C and passes only the pointer (ConanPermission.h). Every input
+    // checked `!s || !*s` — which catches a null pointer and an empty string —
+    // and THEN handed the string to code that walks to the '\0':
+    // `Tabela::Hash` (`while (*s)`), `std::string::operator==(const char*)` in
+    // `Casa`, and `t.jogador = jogador` in `Conceder`. A badly written plugin
+    // (it needn't be malicious) passing bytes with no terminator carried that
+    // loop off the map, and the fault happens on the game's thread, OUTSIDE the
+    // loader's SEH guard: it kills the process, not just the plugin.
     //
-    // A defesa é o teto. Toda chave guardada é menor que o teto (Inserir recusa
-    // o que não cabe), então parar de ler ali não muda resposta nenhuma para
-    // entrada válida — e transforma "leio até achar zero, onde quer que ele
-    // esteja" em "leio no máximo N bytes e recuso".
+    // The defence is the cap. Every stored key is shorter than the cap (Inserir
+    // refuses what doesn't fit), so stopping the read there changes no answer
+    // for valid input — and it turns "read until I find a zero, wherever it may
+    // be" into "read at most N bytes and refuse".
     //
-    // O QUE ISTO **NÃO** COBRE, e não tem como cobrir sem mudar a ABI:
-    //   · ponteiro inválido já no primeiro byte. Para ler qualquer coisa de um
-    //     `const char*` é preciso dereferenciá-lo; não há defesa possível aqui;
-    //   · uma string sem terminador que comece a menos de N bytes do fim de uma
-    //     região mapeada — a leitura limitada ainda cruza a borda.
-    // Cobrir os dois exigiria VirtualQuery por chamada (2.551 ns medidos sob
-    // Wine, contra os 145 ns da consulta inteira: 17x mais caro no laço do
-    // jogo) ou variantes com comprimento na ABI. Fica escrito em vez de
-    // prometido.
+    // What this does **NOT** cover, and can't without changing the ABI:
+    //   · an invalid pointer at the very first byte. To read anything from a
+    //     `const char*` you have to dereference it; there's no defence here;
+    //   · an unterminated string starting less than N bytes from the end of a
+    //     mapped region — the bounded read still crosses the edge.
+    // Covering both would take a VirtualQuery per call (2,551 ns measured under
+    // Wine, against 145 ns for the whole query: 17x more expensive in the game
+    // loop) or length-carrying variants in the ABI. It's written down rather
+    // than promised.
     //
-    // Devolve o comprimento quando há '\0' dentro de `teto` bytes; -1 quando
-    // não há (e aí ninguém toca no resto), quando o ponteiro é nulo, ou quando
-    // a string é vazia — vazia nunca foi chave válida aqui.
+    // Returns the length when there's a '\0' within `teto` bytes; -1 when there
+    // isn't (and then nobody touches the rest), when the pointer is null, or
+    // when the string is empty — empty was never a valid key here.
     inline int ComprimentoLimitado(const char* s, int teto)
     {
         if (!s || teto <= 0) return -1;
@@ -149,44 +153,44 @@ namespace Perm
         return -1;
     }
 
-    // ── tabela de hash sem alocação na consulta ──────────────────────────────
+    // ── a hash table with no allocation on lookup ────────────────────────────
     //
-    // Existe porque `std::unordered_map<std::string,...>::find(const char*)`
-    // CONSTRÓI um std::string a cada consulta, e um id de plataforma tem 17
-    // caracteres — passa do SSO de 15 da libstdc++ e vai para o malloc. Medido
-    // sob Wine: 145 ns por consulta, com um malloc/free dentro. malloc no laço
-    // do jogo, 60 vezes por segundo por jogador, para responder uma pergunta
-    // que é só comparação de texto.
+    // It exists because `std::unordered_map<std::string,...>::find(const char*)`
+    // CONSTRUCTS a std::string on every lookup, and a platform id is 17
+    // characters — past libstdc++'s 15-char SSO, so off to malloc. Measured
+    // under Wine: 145 ns per lookup, with a malloc/free inside. malloc in the
+    // game loop, 60 times a second per player, to answer a question that is
+    // just a string comparison.
     //
-    // Endereçamento aberto, chave embutida (sem ponteiro para fora), sondagem
-    // linear. Zero alocação, zero indireção.
+    // Open addressing, key stored inline (no pointer out), linear probing. Zero
+    // allocation, zero indirection.
     struct Tabela
     {
         struct Item { char id[MAX_ID]; int32_t valor; };
-        std::vector<int32_t> balde;      // -1 = vazio; senão índice em `itens`
+        std::vector<int32_t> balde;      // -1 = empty; otherwise an index into `itens`
         std::vector<Item>    itens;
 
         void    Reservar(size_t n);
-        bool    Inserir(const char* chave, int32_t valor);  // false se a chave não couber
-        int32_t Achar(const char* chave) const;             // -1 se não achou
+        bool    Inserir(const char* chave, int32_t valor);  // false if the key doesn't fit
+        int32_t Achar(const char* chave) const;             // -1 if not found
         static uint64_t Hash(const char* s);
     };
 
-    // ── um nó de permissão já resolvido para um jogador ──────────────────────
+    // ── a permission node already resolved for one player ────────────────────
     struct NoResolvido
     {
-        std::string padrao;      // "vip.kit.diario", "vip.*" ou "*"
-        int32_t     casaLen;     // peso do casamento; ver Decidir()
+        std::string padrao;      // "vip.kit.diario", "vip.*" or "*"
+        int32_t     casaLen;     // the match's weight; see Decidir()
         bool        curinga;
-        bool        nega;        // negação explícita ("-vip.teleporte")
-        bool        individual;  // veio de jogador_permissao, não de grupo
-        int64_t     expira;      // 0 = nunca; herda o menor da cadeia
+        bool        nega;        // an explicit denial ("-vip.teleporte")
+        bool        individual;  // came from jogador_permissao, not from a group
+        int64_t     expira;      // 0 = never; inherits the earliest in the chain
     };
 
     struct GrupoDoJogador
     {
         std::string chave;
-        int64_t     expira;      // 0 = nunca
+        int64_t     expira;      // 0 = never
     };
 
     struct JogadorResolvido
@@ -195,36 +199,54 @@ namespace Perm
         std::vector<GrupoDoJogador> grupos;
     };
 
-    // ── o instantâneo publicado ──────────────────────────────────────────────
+    // ── the published snapshot ───────────────────────────────────────────────
     //
-    // Imutável depois de publicado. Nunca se altera um instantâneo vivo: monta-se
-    // outro e troca-se o ponteiro. Um leitor que já pegou o ponteiro antigo
-    // continua lendo dado coerente e velho por alguns milissegundos — e dado
-    // coerente e velho é infinitamente melhor que dado sendo alterado embaixo dele.
+    // Immutable once published. You never modify a live snapshot: you build
+    // another and swap the pointer. A reader that already grabbed the old
+    // pointer keeps reading coherent, stale data for a few milliseconds — and
+    // coherent stale data is infinitely better than data being modified
+    // underneath it.
     struct Instantaneo
     {
         std::vector<JogadorResolvido> jogadores;
-        Tabela                        idxJogador;      // id -> índice em `jogadores`
+        Tabela                        idxJogador;      // id -> index into `jogadores`
 
-        // Quem nunca apareceu no banco também tem direitos: os do(s) grupo(s)
-        // marcado(s) como padrão. Sem isto, o primeiro login de todo jogador
-        // seria um jogador sem nada — e o plugin de terceiro veria "negado"
-        // onde a configuração diz "permitido".
+        // Someone who never showed up in the database has rights too: those of
+        // whichever group(s) are marked as default. Without this, every
+        // player's first login would be a player with nothing — and the
+        // third-party plugin would see "denied" where the configuration says
+        // "allowed".
         JogadorResolvido padrao;
 
-        // apelido de grupo -> chave atual. É o que faz o RENOME não quebrar
-        // plugin já compilado que fala "vip".
+        // ── the groups that EXIST ───────────────────────────────────────────
+        //
+        // Keys only; the value is the id, which nobody here uses. It serves a
+        // question Armazem couldn't answer without going to the database: *does
+        // this group exist?*
+        //
+        // It arrived on 2026-08-20 because of a good-faith defect. `Conceder`
+        // queued without looking, and validation only happened on the writer
+        // thread, which logged "conceder ignorado: grupo 'x' nao existe" and
+        // carried on. The caller got PERMITIDO — because PERMITIDO meant "I
+        // accepted it into the queue", not "I wrote it". The public header,
+        // though, promises `0 refused (group doesn't exist, invalid id)`, and
+        // that was never the return value. An admin would grant VIP on a
+        // mistyped group name, read "ok" and walk away.
+        Tabela                   idxGrupo;
+
+        // group alias -> current key. It's what keeps a RENAME from breaking an
+        // already-compiled plugin that says "vip".
         Tabela                   idxApelidoGrupo;
         std::vector<std::string> apelidoGrupoPara;
-        // apelido de nó de permissão -> nó atual
+        // permission-node alias -> current node
         Tabela                   idxApelidoNo;
         std::vector<std::string> apelidoNoPara;
 
         uint64_t geracao = 0;
 
-        // Traduz apelido -> atual sem alocar nada. Devolve o próprio `chave`
-        // quando não há apelido, e um ponteiro para dentro do instantâneo
-        // quando há — o instantâneo é imutável e vive mais que a consulta.
+        // Translates alias -> current with no allocation. Returns `chave`
+        // itself when there's no alias, and a pointer into the snapshot when
+        // there is — the snapshot is immutable and outlives the query.
         const char* GrupoAtual(const char* chave) const;
         const char* NoAtual(const char* chave) const;
         const JogadorResolvido* Achar(const char* id) const;
@@ -239,104 +261,113 @@ namespace Perm
         Armazem(const Armazem&)            = delete;
         Armazem& operator=(const Armazem&) = delete;
 
-        // Abre (ou cria) o banco, aplica o esquema, lê o JSON de configuração,
-        // monta o primeiro instantâneo e sobe a thread escritora.
-        // Devolve false SEM subir nada se qualquer passo falhar — Permission
-        // meio de pé é pior que Permission ausente, porque o plugin de terceiro
-        // acha que a resposta "negado" é verdade.
+        // Opens (or creates) the database, applies the schema, reads the
+        // configuration JSON, builds the first snapshot and starts the writer
+        // thread. Returns false WITHOUT bringing anything up if any step fails
+        // — a half-standing Permission is worse than an absent one, because the
+        // third-party plugin believes the "denied" answer is the truth.
         //
-        // `caminhoDb` continua sendo o que a ConanApi mandou
-        // (CaminhoDados("Permission","permission.db")). Ele é o PADRÃO: se o
-        // config.json trouxer "DbPathOverride", vale o do config; se trouxer
-        // "Database": "mysql", o caminho não é usado. A assinatura não mudou de
-        // propósito — Permission.cpp não precisa saber que existe MySQL.
+        // `caminhoDb` is still whatever ConanApi handed over
+        // (CaminhoDados("Permission","permission.db")). It's the DEFAULT: if
+        // config.json carries "DbPathOverride", the config's path wins; if it
+        // carries "Database": "mysql", the path isn't used at all. The
+        // signature didn't change on purpose — Permission.cpp needn't know
+        // MySQL exists.
         //
-        // ONDE ISTO É CHAMADO: na carga do plugin, NÃO no laço do jogo. Com
-        // MySQL, esta chamada espera rede: até MysqlTempoConectarMs (padrão
-        // 5 s) para conectar, mais o esquema. É tempo de arranque do servidor,
-        // não de tick — e está limitado de propósito.
+        // WHERE THIS IS CALLED: at plugin load, NOT in the game loop. With
+        // MySQL this call waits on the network: up to MysqlTempoConectarMs
+        // (5 s by default) to connect, plus the schema. That's server startup
+        // time, not tick time — and it's bounded on purpose.
         //
-        // ── QUANTO TEMPO ISTO SEGURA O ARRANQUE, E POR QUE TEM TETO ─────────
+        // ── HOW LONG THIS HOLDS UP STARTUP, AND WHY IT HAS A CAP ────────────
         //
-        // MEDIDO, não estimado: contra um MySQL a 2 s por comando (proxy lento
-        // real, testes/teste_banco.cpp, cenário 8), o arranque completo são 61
-        // comandos — conexão, esquema, configuração e primeiro instantâneo —
-        // e levou **120,5 segundos**. O ConanLoader carrega os plugins em
-        // sequência, então esses dois minutos eram do servidor inteiro, e o
-        // dono via o servidor "pendurado" no boot sem saber por quê.
+        // MEASURED, not estimated: against a MySQL at 2 s per command (a real
+        // slow proxy, testes/teste_banco.cpp, scenario 8), a full startup is 61
+        // commands — connection, schema, configuration and first snapshot — and
+        // it took **120.5 seconds**. ConanLoader loads plugins in sequence, so
+        // those two minutes belonged to the whole server, and the owner watched
+        // it "hang" at boot without knowing why.
         //
-        // A conta não tem como encolher: o trabalho é esse e a rede é a que é.
-        // O que dá para escolher é ONDE se espera. Então: a abertura acontece
-        // na thread escritora, e Abrir() espera por ela no MÁXIMO 15 s. Passou
-        // disso, Abrir() volta e o arranque CONTINUA em segundo plano; o
-        // Permission fica ausente até terminar, e entra sozinho quando
-        // terminar. Nenhum outro plugin fica preso esperando o banco de quem
-        // escolheu MySQL.
+        // The arithmetic can't shrink: the work is the work and the network is
+        // what it is. What you can choose is WHERE you wait. So: opening
+        // happens on the writer thread, and Abrir() waits for it for at most
+        // 15 s. Past that, Abrir() returns and startup CONTINUES in the
+        // background; Permission stays absent until it finishes, and joins on
+        // its own when it does. No other plugin sits stuck waiting on the
+        // database of whoever chose MySQL.
         //
-        // 15 s foi escolhido por ser: (a) folgado para qualquer MySQL saudável,
-        // local ou remoto — o caso normal termina em dezenas de milissegundos e
-        // NADA muda para ele; (b) abaixo do tempo em que um operador começa a
-        // achar que travou.
+        // 15 s was chosen because it is: (a) generous for any healthy MySQL,
+        // local or remote — the normal case finishes in tens of milliseconds
+        // and NOTHING changes for it; (b) below the point where an operator
+        // starts thinking it has frozen.
         //
-        // ── O QUE `false` SIGNIFICA AQUI, E O QUE MUDOU (18/08/2026) ─────────
+        // ── WHAT `false` MEANS HERE, AND WHAT CHANGED (2026-08-18) ───────────
         //
-        // ANTES: qualquer tropeço do banco (senha errada, MySQL ainda subindo,
-        // banco não criado, sem GRANT) devolvia false, e o Permission ficava
-        // MORTO ATÉ ALGUÉM REINICIAR O SERVIDOR DE JOGO. Reiniciar custa 6-9
-        // minutos com ninguém conseguindo entrar. Um erro de digitação na senha
-        // custava isso, e a causa mais comum de todas — o container do MySQL
-        // terminando de subir 20 s depois do jogo — custava isso à toa.
+        // BEFORE: any database stumble (wrong password, MySQL still coming up,
+        // database not created, no GRANT) returned false, and Permission stayed
+        // DEAD UNTIL SOMEBODY RESTARTED THE GAME SERVER. A restart costs 6-9
+        // minutes with nobody able to connect. A typo in the password cost
+        // that, and the most common cause of all — the MySQL container
+        // finishing its startup 20 s after the game — cost it for nothing.
         //
-        // AGORA: `false` só sai quando NÃO HÁ COMO NEM TENTAR (caminho vazio,
-        // Abrir chamado duas vezes). Banco que não abriu devolve TRUE: o plugin
-        // fica carregado, em estado AUSENTE (Pronto() == false, e nesse estado
-        // ConanPermissionObterApi devolve nullptr — ver INV-ARMAZEM-002), e a
-        // thread escritora retenta em segundo plano com espera crescente,
-        // relendo o config.json a cada tentativa. Quando o banco atender, o
-        // Permission entra sozinho, sem reiniciar nada.
+        // NOW: `false` only comes out when there's NO WAY TO EVEN TRY (empty
+        // path, Abrir called twice). A database that didn't open returns TRUE:
+        // the plugin stays loaded, in the ABSENT state (Pronto() == false, and
+        // in that state ConanPermissionObterApi returns nullptr — see
+        // INV-ARMAZEM-002), and the writer thread retries in the background
+        // with growing backoff, re-reading config.json on every attempt. When
+        // the database answers, Permission joins on its own, with nothing
+        // restarted.
         //
-        // O que NÃO acontece em hipótese nenhuma: usar outro banco que não o
-        // que o config.json mandou usar (INV-BANCO-006).
+        // What does NOT happen under any circumstances: using a database other
+        // than the one config.json said to use (INV-BANCO-006).
         bool Abrir(const char* caminhoDb, const char* caminhoJson, FnLog log);
 
-        // Manda a thread escritora sair e ESPERA por ela. Antes de esperar,
-        // interrompe a operação de banco em curso (IBanco::Interromper) — sem
-        // isso, um MySQL que aceitou a conexão e emudeceu prende o
-        // desligamento do servidor por até msOperar a cada comando.
+        // Tells the writer thread to leave and WAITS for it. Before waiting it
+        // interrupts the in-flight database operation (IBanco::Interromper) —
+        // without that, a MySQL that accepted the connection and then went
+        // silent holds up the server's shutdown by up to msOperar per
+        // command.
         void Fechar();
 
-        // ── laço do jogo: só isto roda lá ───────────────────────────────────
+        // ── the game loop: only this runs there ─────────────────────────────
         int32_t Tem(const char* jogador, const char* no) const;
         int32_t NoGrupo(const char* jogador, const char* grupo) const;
+
+        // 1 exists · 0 doesn't · -1 don't know (snapshot not published yet).
+        // Accepts aliases: asking by the old key of a renamed group gets
+        // "exists", which is the truth that matters to whoever is granting.
+        int32_t GrupoExiste(const char* grupo) const;
         int64_t ExpiraEm(const char* jogador, const char* grupo) const;
         int32_t Grupos(const char* jogador, char* saida, int32_t tam) const;
 
-        // ── fora do laço ────────────────────────────────────────────────────
+        // ── outside the loop ────────────────────────────────────────────────
         //
-        // As três devolvem PERMITIDO quando a tarefa foi ACEITA para gravação
-        // (não quando ela já foi gravada — quem grava é a thread escritora), e
-        // NAO_SEI quando o Armazém sabe de antemão que não vai gravar:
+        // All three return PERMITIDO when the task was ACCEPTED for writing
+        // (not when it has been written — the writer thread does that), and
+        // NAO_SEI when Armazem knows in advance it won't write:
         //
-        //   · o banco não está servindo agora (nunca abriu, ou caiu). Dizer
-        //     "ok" para um comando que não vai acontecer é o defeito de boa-fé
-        //     mais caro daqui: o admin digita `dar fulano vip`, lê "pronto", e
-        //     o jogador reclama amanhã. Com NAO_SEI, quem chamou pode avisar na
-        //     hora que o banco está fora;
-        //   · a fila está no teto (INV-ARMAZEM-004). Também é NAO_SEI: recusar
-        //     é honesto, crescer sem limite mata o processo do jogo.
+        //   · the database isn't serving right now (never opened, or dropped).
+        //     Saying "ok" to a command that won't happen is the most expensive
+        //     good-faith defect here: the admin types `dar fulano vip`, reads
+        //     "done", and the player complains tomorrow. With NAO_SEI, the
+        //     caller can say right away that the database is down;
+        //   · the queue is at its cap (INV-ARMAZEM-004). Also NAO_SEI:
+        //     refusing is honest, growing without limit kills the game's
+        //     process.
         int32_t Conceder(const char* jogador, const char* grupo,
                          int64_t expiraEm, const char* quem);
         int32_t Revogar(const char* jogador, const char* grupo, const char* quem);
-        int32_t VerJogador(const char* jogador, const char* nome);  // registra "visto"
+        int32_t VerJogador(const char* jogador, const char* nome);  // records "seen"
         bool    Recarregar();
 
-        // O banco escolhido no config.json está atendendo AGORA? Leitura
-        // atômica, barata, chamável de qualquer thread. Quem escreve é só a
-        // thread escritora.
+        // Is the database chosen in config.json answering RIGHT NOW? An
+        // atomic, cheap read, callable from any thread. Only the writer thread
+        // ever writes it.
         bool BancoServindo() const { return m_bancoServe.load(std::memory_order_acquire); }
 
-        // Só para o teste: espera a fila de escrita esvaziar. NÃO existe para o
-        // jogo — no jogo ninguém espera escrita.
+        // For the test only: waits for the write queue to drain. It does NOT
+        // exist for the game — in the game nobody waits on a write.
         void EsperarFila();
 
         uint64_t Geracao() const;
@@ -348,69 +379,71 @@ namespace Perm
             enum Tipo { CONCEDER, REVOGAR, VISTO, RECARREGAR, SAIR } tipo;
             std::string jogador, grupo, quem, nome;
             int64_t     expira = 0;
-            // Só o reenvio depois de uma queda de conexão liga isto. Serve para
-            // (a) reenviar no máximo UMA vez e (b) marcar a linha do diário,
-            // para uma auditoria com duas linhas iguais ter explicação escrita
-            // em vez de virar mistério. Ver Trabalhar().
+            // Only a resend after a dropped connection sets this. It serves to
+            // (a) resend at most ONCE and (b) mark the audit-log row, so that
+            // an audit finding two identical rows has a written explanation
+            // instead of turning into a mystery. See Trabalhar().
             bool        reenvio = false;
         };
 
-        void  Trabalhar();                       // corpo da thread escritora
+        void  Trabalhar();                       // the writer thread's body
         bool  ExecutarTarefa(const Tarefa& t, bool& mexeu);
 
-        // Cria o IBanco a partir do config.json, abre, aplica esquema e
-        // configuração e publica o primeiro instantâneo. RELÊ o config a cada
-        // chamada de propósito (INV-ARMAZEM-003): é o que faz senha corrigida,
-        // porta corrigida e "Database" corrigido valerem sem reiniciar o jogo.
-        // Chamada pelo arranque e pela thread escritora — nunca pelo laço.
+        // Builds the IBanco from config.json, opens it, applies the schema and
+        // the configuration, and publishes the first snapshot. It RE-READS the
+        // config on every call, on purpose (INV-ARMAZEM-003): that's what makes
+        // a corrected password, a corrected port and a corrected "Database"
+        // take effect without restarting the game. Called by startup and by the
+        // writer thread — never by the loop.
         bool  AbrirBanco();
 
-        // Chamada pela thread escritora a cada volta. Decide se é hora de
-        // tentar abrir/reconectar, aplica a espera crescente e mantém
-        // m_bancoServe. Toda a política de "o banco não colabora" mora aqui.
+        // Called by the writer thread on every pass. Decides whether it's time
+        // to try opening or reconnecting, applies the growing backoff, and
+        // maintains m_bancoServe. The whole "the database won't cooperate"
+        // policy lives here.
         void  CuidarDaConexao();
 
-        // Enfileira aplicando os tetos. false = recusada (fila cheia). Não
-        // confere se o banco está vivo: quem faz isso é o chamador, porque a
-        // mensagem certa depende de qual comando era.
+        // Queues, applying the caps. false = refused (queue full). It doesn't
+        // check whether the database is alive: the caller does that, because
+        // the right message depends on which command it was.
         bool  Enfileirar(Tarefa&& t);
 
         bool  AplicarEsquema();
         bool  AplicarConfig(const char* caminhoJson);
-        bool  Reconstruir();                     // banco -> instantâneo novo
+        bool  Reconstruir();                     // database -> a new snapshot
         void  Publicar(Instantaneo* novo);
         void  Registrar(const char* fmt, ...) const;
         const Instantaneo* Atual() const { return m_atual.load(std::memory_order_acquire); }
 
-        // ── leitura protegida: o instantâneo não pode ser liberado embaixo ────
+        // ── a guarded read: the snapshot can't be freed underneath ───────────
         //
-        // O DEFEITO QUE ISTO CONSERTA (o servidor CAÍA)
-        // ---------------------------------------------
-        // A versão anterior liberava o instantâneo que sobrevivesse a DUAS
-        // publicações, argumentando que "duas trocas levam segundos no mínimo".
-        // Medido sob Wine: uma publicação leva ~4 ms. A janela de vida de um
-        // aposentado era de ~8 ms — menos que um quantum de escalonamento, e a
-        // premissa estava errada por ~250×.
+        // THE DEFECT THIS FIXES (the server WAS CRASHING)
+        // -----------------------------------------------
+        // The previous version freed a snapshot that survived TWO publications,
+        // arguing that "two swaps take seconds at minimum". Measured under
+        // Wine: a publication takes ~4 ms. A retired snapshot's lifetime window
+        // was ~8 ms — less than a scheduling quantum, and the premise was wrong
+        // by a factor of ~250.
         //
-        // Consequência reproduzida 3 vezes em 3: admin dando VIP em lote (loja
-        // web, laço de /perm dar) enquanto qualquer plugin lê permissão no laço
-        // do jogo →
+        // The consequence, reproduced 3 times out of 3: an admin granting VIP
+        // in bulk (a web shop, a loop of /perm dar) while any plugin reads a
+        // permission in the game loop →
         //
         //   wine: Unhandled page fault on read access to 00007FFFFF0654DC
         //   =>0 strcmp(str1=*** invalid address ***, str2="76561198000010000")
         //
-        // Access violation NA THREAD DO JOGO, que é justamente onde a guarda de
-        // plugin NÃO alcança. Servidor no chão, sem rastro perto da causa.
+        // An access violation ON THE GAME'S THREAD, which is exactly where the
+        // plugin guard does NOT reach. Server on the floor, with no trace
+        // anywhere near the cause.
         //
-        // O conserto não é aumentar o número de publicações: qualquer número
-        // seria um palpite sobre quanto tempo um leitor demora. É CONTAR os
-        // leitores. Só se libera aposentado quando não existe nenhum leitor
-        // ativo — e aí é certeza, não estimativa.
+        // The fix isn't raising the number of publications: any number would be
+        // a guess about how long a reader takes. It's COUNTING the readers. A
+        // retired snapshot is only freed when there's no active reader at all —
+        // and then it's certainty, not an estimate.
         //
-        // Ordem que torna isto correto: Publicar troca m_atual PRIMEIRO. Depois
-        // disso, todo leitor novo enxerga o instantâneo novo. Se o contador
-        // estiver em zero nesse momento, nenhum leitor pode estar segurando o
-        // velho.
+        // The ordering that makes this correct: Publicar swaps m_atual FIRST.
+        // After that, every new reader sees the new snapshot. If the counter is
+        // zero at that moment, no reader can be holding the old one.
         class Leitura
         {
         public:
@@ -430,79 +463,83 @@ namespace Perm
             const Instantaneo* m_s;
         };
 
-        // O MEIO. Quem manda no que ele é: "Database" no config.json. Só a
-        // thread escritora e o arranque encostam nisto — ver INV-BANCO-001.
+        // THE MEDIUM. What decides which one it is: "Database" in config.json.
+        // Only the writer thread and startup touch this — see INV-BANCO-001.
         //
-        // A TROCA do ponteiro é protegida por m_mtxBanco, e só ela. O uso não
-        // precisa de trava porque só existe uma thread usando; a trava existe
-        // porque Fechar(), de OUTRA thread, precisa chamar Interromper() no
-        // banco que estiver lá — e sem ela isso corre contra a troca.
+        // SWAPPING the pointer is guarded by m_mtxBanco, and only that. Using
+        // it needs no lock because only one thread uses it; the lock exists
+        // because Fechar(), from ANOTHER thread, has to call Interromper() on
+        // whichever database is there — and without the lock that races the
+        // swap.
         std::unique_ptr<IBanco> m_banco;
         mutable std::mutex      m_mtxBanco;
 
         FnLog       m_log = nullptr;
         std::string m_caminhoDb, m_caminhoJson;
 
-        // ── política de "o banco não colabora" ──────────────────────────────
+        // ── the "the database won't cooperate" policy ───────────────────────
         //
-        // O banco escolhido está atendendo AGORA. Escrito só pela thread
-        // escritora (e por Abrir, antes de ela existir); lido pelo laço do
-        // jogo em Conceder/Revogar/VerJogador, e por isso é atômico.
+        // The chosen database is answering RIGHT NOW. Written only by the
+        // writer thread (and by Abrir, before that thread exists); read by the
+        // game loop in Conceder/Revogar/VerJogador, which is why it's atomic.
         std::atomic<bool> m_bancoServe{false};
 
-        // A PRIMEIRA tentativa de abertura já terminou (com sucesso ou não)?
-        // Só existe para Abrir() saber se o silêncio é "falhou" ou "ainda
-        // estou abrindo" — e as duas exigem mensagens diferentes no log.
+        // Has the FIRST open attempt finished (successfully or not)? It exists
+        // only so Abrir() can tell whether the silence means "it failed" or
+        // "I'm still opening" — and the two need different log messages.
         std::atomic<bool> m_arranqueFeito{false};
 
-        // Espera CRESCENTE entre tentativas, em segundos: 5, 10, 20, 40, 80,
-        // 160, 300 (teto). Zero = está tudo bem, não há tentativa pendente.
+        // GROWING backoff between attempts, in seconds: 5, 10, 20, 40, 80,
+        // 160, 300 (cap). Zero = everything's fine, no attempt pending.
         //
-        // POR QUE CRESCENTE, e não os 15 s fixos de antes: as duas pontas
-        // importam e são opostas. Um blip de rede de 3 s tem de se resolver
-        // rápido (daí o primeiro degrau curto); um MySQL desligado há 6 horas
-        // não pode receber uma tentativa a cada 15 s pela noite inteira — são
-        // 1.440 conexões contra um banco morto, 1.440 linhas de log, e nenhuma
-        // delas ia dar certo. O teto de 300 s existe pela ponta contrária: o
-        // dono que acabou de consertar a senha não pode esperar mais que 5
-        // minutos para o conserto valer.
-        int64_t     m_proximaTentativa   = 0;   // relógio absoluto, em segundos
+        // WHY GROWING, and not the fixed 15 s it used to be: both ends matter
+        // and they pull opposite ways. A 3-second network blip has to clear
+        // fast (hence the short first step); a MySQL that's been off for 6
+        // hours can't take one attempt every 15 s all night — that's 1,440
+        // connections against a dead database, 1,440 log lines, and not one of
+        // them was going to work. The 300 s cap exists for the other end: the
+        // owner who just fixed the password can't wait more than 5 minutes for
+        // the fix to take.
+        int64_t     m_proximaTentativa   = 0;   // absolute clock, in seconds
         int         m_esperaSegundos     = 0;
-        int         m_falhasReconexao    = 0;   // 2 seguidas => refaz do config
+        int         m_falhasReconexao    = 0;   // 2 in a row => rebuild from config
 
-        // O último estado que a thread escritora ANUNCIOU no log. Só ela toca,
-        // então não precisa ser atômico — e é por isso que ele existe separado
-        // de m_bancoServe: aquele é o estado publicado para o laço do jogo e
-        // pode ser derrubado de dentro de uma tarefa que falhou; este é o que
-        // decide se a linha "a conexao caiu" já foi escrita. Misturar os dois
-        // fazia a queda descoberta no meio de uma tarefa passar em silêncio.
+        // The last state the writer thread ANNOUNCED in the log. Only it
+        // touches this, so it needn't be atomic — and that's exactly why it
+        // exists separately from m_bancoServe: that one is the state published
+        // to the game loop and can be knocked down from inside a failed task;
+        // this one decides whether the "the connection dropped" line has
+        // already been written. Merging the two made a drop discovered
+        // mid-task pass in silence.
         bool        m_estavaServindo    = false;
 
         int64_t     m_ultimoAvisoConexao = 0;
-        // Contadores desde o último aviso. Existem para o aviso periódico dizer
-        // QUANTO se perdeu, em vez de repetir "o banco esta fora" sem tamanho —
-        // é a diferença entre o dono saber que perdeu 3 comandos e achar que
-        // perdeu a noite.
+        // Counters since the last warning. They exist so the periodic warning
+        // can say HOW MUCH was lost, instead of repeating "the database is
+        // down" with no size to it — that's the difference between the owner
+        // knowing they lost 3 commands and assuming they lost the night.
         uint64_t    m_recusadasDesdeAviso   = 0;
         uint64_t    m_descartadasDesdeAviso = 0;
 
         std::atomic<const Instantaneo*> m_atual{nullptr};
-        // Instantâneos aposentados. Não se libera na hora: um leitor pode estar
-        // com o ponteiro na mão. Ficam guardados e são liberados na próxima
-        // publicação seguinte à seguinte — dois ciclos de folga. Custa alguns
-        // KB e elimina a única forma de este desenho derrubar o servidor.
+        // Retired snapshots. They aren't freed right away: a reader may have
+        // the pointer in hand. They're kept and freed once no reader is active
+        // (see the Leitura class above). It costs a few KB and removes the only
+        // way this design could take the server down.
         std::vector<const Instantaneo*> m_aposentados;
 
-        // Leitores ATIVOS agora. mutable porque a leitura é const do ponto de
-        // vista de quem consulta permissão — e é, logicamente: nada muda.
+        // Readers ACTIVE right now. mutable because the read is const from the
+        // point of view of whoever queries a permission — and logically it is:
+        // nothing changes.
         mutable std::atomic<int> m_leitores{0};
 
         mutable std::mutex      m_mtxFila;
         std::condition_variable m_cvFila;
         std::deque<Tarefa>      m_fila;
-        // Quantos VISTO estão na fila agora. Contador, e não varredura da fila:
-        // quem enfileira é o laço do jogo, e percorrer milhares de tarefas com
-        // a trava na mão seria justamente pôr o custo do banco dentro do tick.
+        // How many VISTO tasks are in the queue right now. A counter, not a
+        // sweep of the queue: what enqueues is the game loop, and walking
+        // thousands of tasks with the lock in hand would be exactly putting the
+        // database's cost inside the tick.
         size_t                  m_vistosNaFila = 0;
         std::thread             m_thread;
         std::atomic<bool>       m_rodando{false};

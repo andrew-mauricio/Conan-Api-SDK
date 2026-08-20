@@ -94,6 +94,15 @@ cl /nologo /std:c++17 /O2 /EHsc /LD /MT ^
    MeuPlugin.cpp /Fe:MeuPlugin.dll
 ```
 
+Ou não digite nada: toda pasta de exemplo traz um **`compilar.bat`** que acha o
+compilador que você tem e roda. Abra o *Prompt de Comando do Desenvolvedor x64
+para VS* pelo menu Iniciar, entre na pasta do exemplo e rode. Ele procura o
+`cl.exe` primeiro e cai no `g++` se você tiver o MinGW-w64 no Windows.
+
+O `compilar.sh` ao lado é a mesma compilação para Linux e WSL. É com ele que
+este projeto compila, e é por isso que ele está lá — no Windows você não precisa
+dele.
+
 Os exports saem sem decoração de nome (`ConanPluginCarregar`, não
 `?ConanPluginCarregar@@YA...`) por causa do `extern "C"` no header, e a DLL
 resultante depende só de `KERNEL32.dll` por causa do `/MT`. Se você vir
@@ -638,6 +647,34 @@ AActor* achados[32]; int quantos = 0;
 lib->AlgumaBuscaDeAtores(..., achados, 32, quantos);
 ```
 
+### `FName` de entrada: use `ConanApi::Nome("...")`
+
+Um `FName` **não é uma string**: são dois inteiros apontando para uma entrada do
+pool de nomes daquele processo. Você não tem como inventar esses números — e
+inventar é pior do que errar, porque `{0,0}` é o nome `None` e qualquer outro
+par é *algum* nome válido, só que não o seu. O jogo aceita e faz outra coisa,
+sem um erro sequer.
+
+```cpp
+// entregar um item ao personagem: o Context é um FName
+personagem->SpawnTemplateItem(10001, ConanApi::Nome("minhaloja"),
+                              100, 1.0f, 0.0f, true);
+
+// pôr um item num inventário
+inventario->AddItemTemplate(10001, -1, ConanApi::Nome("minhaloja"),
+                            100, false, 1.0f, 0.0f);
+```
+
+`ConanApi::Nome` pede ao próprio jogo (`Conv_StringToName`), que **cria** o nome
+no pool se ele ainda não existir — o que importa quando você inventa um contexto
+seu, que nenhuma parte do jogo usaria. O resultado é memorizado, então chamar
+dentro de um laço não custa.
+
+> Isto entrou em 20/08/2026 e destravou o que estava fora de alcance: sem essa
+> ponte, **nenhuma** função com parâmetro `FName` era chamável — inclusive as
+> duas acima, que são *como se entrega um item a um jogador*. Uma loja era
+> impossível de escrever, e o motivo não aparecia em lugar nenhum.
+
 **Você não linka nada.** O SDK inteiro roteia pela tabela — é por isso que ele
 funciona igual em MSVC, MinGW e clang. Se algum dia o seu projeto pedir uma
 `libconanapi.a`, algo está errado: não existe biblioteca nossa para você linkar.
@@ -785,3 +822,34 @@ campo, com o nome.
 - [ ] se usa o Permission, consulta no uso e degrada quando ele falta
 - [ ] rodou num servidor de verdade — 200 no `curl` não prova tela, e teste
       unitário não prova o caminho real
+
+---
+
+## Glossário: os nomes da ABI
+
+Os identificadores da tabela estão em português porque fazem parte da ABI
+publicada, e renomeá-los quebraria todo plugin já compilado. O que cada um faz:
+
+| nome na ABI | o que é |
+|---|---|
+| `ConanPluginCarregar` | entrada do plugin, chamada depois que o mundo subiu |
+| `ConanPluginRegistrar` | entrada opcional e mais cedo, antes do mundo |
+| `ConanPluginDescarregar` | chamada no descarregamento |
+| `ConanApiTabela` | a tabela de funções |
+| `ConanChamada` | o contexto da chamada interceptada |
+| `ConanAcao` / `CONAN_CONTINUAR` / `CONAN_CANCELAR` | veredito do hook: seguir ou cancelar |
+| `Log` | escreve no `ConanApi.log` |
+| `Legivel` | este ponteiro está legível? |
+| `LerMembro` / `EscreverMembro` | lê / escreve um campo por offset |
+| `LerBit` / `EscreverBit` | lê / escreve um bitfield |
+| `OffsetDoMembro` | resolve o offset de um campo **pelo nome** |
+| `EhReplicado` | este campo é replicado? |
+| `ChamarFuncao` / `ChamarFuncaoEx` | chama uma função do jogo pelo nome |
+| `HookProcessEvent` / `RemoverHook` | instala / remove um hook |
+| `AgendarNaThreadDoJogo` | agenda trabalho na thread do jogo |
+| `LerTextoDoJogo` / `CriarTextoDoJogo` | lê / aloca uma string da engine |
+| `MensagemParaTodos` / `MensagemParaJogador` / `MensagemNaTela` | mensagens |
+| `CaminhoConfig` / `CaminhoDados` / `CaminhoRaiz` | caminhos que são do seu plugin |
+| `UltimaChamadaExecutou` | a última chamada realmente executou? |
+| `NumObjects` / `GetObjectByIndex` / `FindObject` / `FindObjects` | busca de objeto |
+| `GetDefaultObject` / `DescendeDe` / `NomeDoObjeto` | auxiliares de classe |

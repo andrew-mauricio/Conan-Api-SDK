@@ -1,13 +1,12 @@
-// ExemploVigia — boas-vindas, contagem de jogadores e comandos de chat.
-// SDK e leu SO a documentacao que vem dentro dele.
+// ExemploVigia — a welcome message, a player count and chat commands.
 //
-// O que ele faz, e por que estas escolhas:
-//   · da boas-vindas a quem entra          (evento K2_PostLogin, do EVENTOS.md)
-//   · responde !online no chat             (ServerSendChatMessage, offset 0x068)
-//   · responde !vigia so' para quem tem permissao  (Permission, degradando)
+// What it does, and why these choices:
+//   · welcomes whoever joins        (the K2_PostLogin event, from EVENTS.md)
+//   · answers !online in chat       (ServerSendChatMessage, offset 0x068)
+//   · answers !vigia only for those with permission  (Permission, degrading)
 //
-// Escrito seguindo o guia PARA-DESENVOLVEDORES.md linha a linha, para achar o
-// que trava quem chega sem conhecer nada.
+// Written by following Docs/DEVELOPERS.md line by line, to find what trips up
+// somebody arriving who knows nothing yet.
 
 #include "Conan/ConanPluginApi.h"
 #include "Conan/ConanPermission.h"
@@ -17,15 +16,15 @@
 
 static const ConanApiTabela* g_api = nullptr;
 
-// Quantos entraram desde que o servidor subiu. Contador simples de proposito:
-// o objetivo e' exercitar o caminho, nao ser esperto.
+// How many joined since the server came up. A deliberately simple counter: the
+// point is to exercise the path, not to be clever.
 static int g_entraram = 0;
 
-// ── quantos jogadores estao online agora ────────────────────────────────────
+// ── how many players are online right now ───────────────────────────────────
 //
-// A doc diz que FindObjects acha objetos vivos por classe. E' assim que se
-// conta gente online sem guardar estado proprio (que desincroniza no primeiro
-// crash de cliente).
+// The docs say FindObjects finds live objects by class. That's how you count
+// people online without keeping state of your own (which goes out of sync on
+// the first client crash).
 static int ContarOnline()
 {
     void* achados[128];
@@ -33,20 +32,20 @@ static int ContarOnline()
     return n < 0 ? 0 : n;
 }
 
-// ── alguem falou no chat ────────────────────────────────────────────────────
+// ── somebody spoke in chat ──────────────────────────────────────────────────
 extern "C" ConanAcao AoFalar(ConanChamada* c)
 {
     char texto[512];
-    // 0x068 = Message dentro de ChatRpcData. O guia avisa que offset cru e' a
-    // unica coisa que a atualizacao do jogo pode mover — anotado.
+    // 0x068 = Message inside ChatRpcData. The guide warns that a raw offset is
+    // the one thing a game update can move — noted.
     if (g_api->LerTextoDoJogo(c->Parms, 0x068, texto, sizeof(texto)) <= 0)
         return CONAN_CONTINUAR;
 
     if (texto[0] != '!')
-        return CONAN_CONTINUAR;              // conversa normal segue o caminho
+        return CONAN_CONTINUAR;              // ordinary talk carries on
 
-    // Para responder e' preciso o NOME de quem falou: MensagemParaJogador
-    // endereca por nome, nao por controller. userName mora em 0x048.
+    // To answer you need the NAME of whoever spoke: MensagemParaJogador
+    // addresses by name, not by controller. userName sits at 0x048.
     char quem[128];
     if (g_api->LerTextoDoJogo(c->Parms, 0x048, quem, sizeof(quem)) <= 0)
         return CONAN_CONTINUAR;
@@ -58,14 +57,14 @@ extern "C" ConanAcao AoFalar(ConanChamada* c)
                       ContarOnline(), g_entraram);
         g_api->MensagemParaJogador(quem, msg);
         g_api->Log("[Vigia] !online respondido a %s (%d online)", quem, ContarOnline());
-        return CONAN_CANCELAR;               // engole: e' comando, nao conversa
+        return CONAN_CANCELAR;               // swallow it: a command, not talk
     }
 
     if (std::strcmp(texto, "!vigia") == 0)
     {
-        // A doc insiste: consultar no USO, nunca no carregamento, e escolher o
-        // valor de ausencia pelo custo do erro. Isto so' mostra estatistica,
-        // entao negar por 30 s durante uma queda de MySQL nao machuca ninguem.
+        // The docs insist: query at USE time, never at load, and pick the
+        // absent-value by the cost of being wrong. This only shows statistics,
+        // so denying for 30 s during a MySQL outage hurts nobody.
         char id[64];
         int libera = 0;
         if (ConanPermIdDoController(c->Obj, id, sizeof(id)) > 0)
@@ -88,41 +87,43 @@ extern "C" ConanAcao AoFalar(ConanChamada* c)
     return CONAN_CONTINUAR;
 }
 
-// ── alguem entrou no servidor ───────────────────────────────────────────────
+// ── somebody joined the server ──────────────────────────────────────────────
 extern "C" ConanAcao AoEntrar(ConanChamada* c)
 {
     ++g_entraram;
 
-    // NewPlayer e' o primeiro parametro (o EVENTOS.md diz isso). Sem ele nao
-    // ha para quem mandar a mensagem.
+    // NewPlayer is the first parameter (EVENTS.md says so). Without it there's
+    // nobody to send the message to.
     void* controller = nullptr;
     if (g_api->LerParm(c, 0, &controller, sizeof(controller)) > 0 && controller)
     {
-        // Aqui eu tenho o controller (e nao o nome), entao a rota e' a tela.
+        // Here we have the controller (not the name), so the route is the screen.
         g_api->MensagemNaTela(controller,
             "Bem-vindo! Digite !online para ver quem esta jogando.", 8.0f);
     }
 
     g_api->Log("[Vigia] jogador entrou (%d desde o boot, %d online)",
                g_entraram, ContarOnline());
-    return CONAN_CONTINUAR;                  // nunca cancelar um login
+    return CONAN_CONTINUAR;                  // never cancel a login
 }
 
 extern "C" __declspec(dllexport)
 void ConanPluginCarregar(const ConanApiTabela* api)
 {
-    // A rede que o guia manda ter: plugin compilado contra tabela maior, rodando
-    // em API mais velha, leria ponteiro alem do fim da struct.
+    // The safety net the guide insists on: a plugin compiled against a bigger
+    // table, running on an older API, would read a pointer past the end of the
+    // struct.
     if (!api || api->tamanho < sizeof(ConanApiTabela))
         return;
 
     g_api = api;
     g_api->Log("[Vigia] subiu — tabela v%d, %d bytes", (int)api->versao, (int)api->tamanho);
 
-    // ATENCAO ao sentido: HookProcessEvent devolve o ID do hook, e ZERO e' a
-    // falha. Escrevi `!= 0` de primeira, por reflexo de "0 = ok" do C, e o
-    // aviso dispararia exatamente quando desse certo. O guia mostra a chamada
-    // sem usar o retorno, entao quem decide conferir tem de adivinhar.
+    // WATCH the direction: HookProcessEvent returns the hook's ID, and ZERO is
+    // the failure. I wrote `!= 0` first, out of C's "0 = ok" reflex, and the
+    // warning would have fired exactly when it worked. The guide shows the call
+    // without using the return value, so anyone who decides to check has to
+    // guess.
     if (g_api->HookProcessEvent("ServerSendChatMessage", AoFalar, nullptr, 100) == 0)
         g_api->Log("[Vigia] AVISO: nao consegui hookar o chat");
 

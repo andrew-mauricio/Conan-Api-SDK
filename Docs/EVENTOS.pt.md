@@ -1,5 +1,7 @@
 # Mapa de eventos — o que hookar para reagir ao jogo
 
+*Tradução. O documento principal é o [EVENTS.md](EVENTS.md), em inglês.*
+
 Este é o documento que faltava. A API sabe interceptar função **por nome**, mas
 existem 36.392 nomes e nenhuma pista de qual corresponde a qual evento. Procurar
 "chat" no catálogo devolve 281 resultados, quase todos irrelevantes.
@@ -123,6 +125,21 @@ Para dar retorno ao jogador, veja o limite de `FString` mais abaixo.
 
 Exemplo completo: `Exemplos/ExemploComando/`.
 
+### Responder ao jogador
+
+Dá para responder. Monte o texto com o alocador do próprio jogo e chame uma
+função de interface no controller:
+
+```cpp
+ConanApi::Call<void>(controller, "ClientHUDShowNotification",
+                     ConanApi::TextoRico("Você tem 250 pontos"),
+                     bool(true), bool(false));
+```
+
+`ConanApi::TextoRico` e `ConanApi::Texto` entregam ao jogo uma `FText`/`FString`
+que o **jogo** alocou — é esse o truque; a seção mais abaixo explica por quê. O
+`Conan Shop` usa isso em produção todo dia.
+
 ---
 
 ## Identidade do jogador
@@ -197,6 +214,35 @@ por tabela. Não vale insistir — o catálogo respondeu mais rápido.
 
 ---
 
+## Mandar texto PARA o jogo: por que precisa da API
+
+Montar uma `FString` apontando para buffer do plugin e passá-la a uma função por
+reflexão **derruba o servidor**. Foi medido, com
+`ConvertToAbsolutePath("teste-api-xyz")`: o log do plugin morre exatamente na
+chamada.
+
+A razão é estrutural. `ProcessEvent` **destrói o bloco de parâmetros** quando a
+função retorna — percorre `DestructorLink` e chama o destrutor de cada
+propriedade. O destrutor de `FString` chama `FMemory::Free(Data)`, o alocador do
+jogo, sobre um ponteiro que veio da nossa pilha. Não é o jogo lendo errado: é o
+jogo fazendo o certo com memória que nunca foi dele.
+
+Então a string tem de ser alocada pelo alocador do jogo. É o que
+`ConanApi::Texto` (`FString`) e `ConanApi::TextoRico` (`FText`) fazem — a API
+acha o `GMalloc`/`FMemory::Malloc` e monta o valor de 16 bytes
+`{wchar_t* Data; int32 Num; int32 Max}` com a memória do próprio jogo. O tempo
+de vida é o da expressão da chamada, e isso basta: o jogo copia ou consome
+durante o `ProcessEvent` e destrói o bloco ao retornar.
+
+Mesma ideia para `FName`, um passo além: `ConanApi::Nome` passa pelo
+`Conv_StringToName` do jogo. Sem ele, nenhuma função que recebe `FName` era
+chamável — inclusive `SpawnTemplateItem`, que é como item chega ao jogador.
+
+**Um plugin não consegue montar nenhum dos três sozinho.** É por isso que os
+três moram na tabela.
+
+---
+
 ## O que ainda não está medido
 
 - **A ordem e a frequência real dos eventos.** O catálogo diz que a função existe;
@@ -204,23 +250,4 @@ por tabela. Não vale insistir — o catálogo respondeu mais rápido.
   (`api->HookProcessEventTudo`) **com o servidor já carregado** e deixá-lo expirar
   sozinho. Ligado durante o arranque, ele impede o mundo de terminar de carregar
   — medido: o servidor travou em 4,35 GB em vez dos 8,7 normais.
-- **Responder ao jogador: MEDIDO, e não dá por reflexão.** Isto saiu do estado
-  "não medido" para "medido e negativo". Montar uma `FString` apontando para
-  buffer do plugin e passá-la a uma função por reflexão **derruba o servidor**.
-
-  Testado com `ConvertToAbsolutePath("teste-api-xyz")`: o log do plugin morre
-  exatamente na chamada.
-
-  A razão é estrutural: `ProcessEvent` **destrói o bloco de parâmetros** quando a
-  função retorna — percorre `DestructorLink` e chama o destrutor de cada
-  propriedade. O destrutor de `FString` chama `FMemory::Free(Data)`, o alocador do
-  jogo, sobre um ponteiro da nossa pilha. Não é o jogo lendo errado: é o jogo
-  fazendo o certo com memória que não é dele.
-
-  Para funcionar, a string tem de ser alocada pelo alocador do jogo (`GMalloc` /
-  `FMemory::Malloc`), e achar o alocador nesta build ainda não foi feito.
-
-  **O que dá para fazer hoje:** `g_api->Log()` (arquivo), ou hookar uma função
-  que JÁ recebe texto do jogo e alterar o que passa por ela — aí a `FString` é do
-  jogo, com memória do jogo, e ninguém libera nada indevido.
 - **`UniqueNetIdRepl`** — o struct de identidade de rede não foi decomposto.

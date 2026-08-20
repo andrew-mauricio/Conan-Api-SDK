@@ -1,8 +1,8 @@
-Conan-Api SDK 2.7.0 — escrever plugins para Conan Exiles
-===========================================================
+Conan-Api SDK — escrever plugins para Conan Exiles
+===================================================
 
-Tabela da API: v6
-Serve para a build 24784646 do jogo (UE 5.6.1 (++exiles+release))
+Este arquivo e' TRADUCAO. O documento principal e' o README.txt, em ingles, e
+e' ele que fica atualizado primeiro.
 
 O QUE VOCE PRECISA
 ------------------
@@ -34,9 +34,10 @@ O QUE VEM AQUI
 --------------
   include/Conan/ConanPluginApi.h    a tabela da API — e' so isto que voce inclui
   include/Conan/ConanPermission.h   consultar VIP e permissoes (opcional)
-  Exemplos/                         seis exemplos com fonte, para copiar
-  Docs/PARA-DESENVOLVEDORES.md      o guia completo
-  Docs/EVENTOS.md                   quais eventos do jogo existem
+  Exemplos/                         exemplos com fonte, para copiar
+  Docs/PARA-DESENVOLVEDORES.pt.md   o guia completo
+  Docs/EVENTOS.pt.md                quais eventos do jogo existem
+  PUBLICAR-PLUGIN.pt.md             o que a gente pede de um plugin publicado
 
 COMECE ASSIM
 ------------
@@ -51,13 +52,9 @@ VERSOES: O QUE PRECISA BATER
   Seu compilador NAO precisa ser o mesmo que o nosso.
   Sua DLL precisa ser x64 e nao depender de runtime externo (/MT).
 
-  No seu PluginInfo.json, declare de qual versao da tabela voce precisa:
-
-      { "FullName":"Meu Plugin", "Version":"1.0.0", "MinApiVersion":6 }
-
-  Se o servidor tiver uma API mais velha que isso, o carregador RECUSA seu
-  plugin e diz qual versao falta — em vez de deixar rodar lendo estrutura que
-  mudou de tamanho.
+  No seu PluginInfo.json, declare de qual versao da tabela voce precisa. Se o
+  servidor tiver uma API mais velha, o carregador RECUSA seu plugin e diz qual
+  versao falta — em vez de deixar rodar lendo estrutura que mudou de tamanho.
 
   E confira sempre, na primeira linha do seu ConanPluginCarregar:
 
@@ -69,28 +66,5 @@ QUANDO O JOGO ATUALIZAR
   e a tabela nao muda de forma. A excecao e' plugin que usa offset cru do jogo
   (como o layout do chat) — esse precisa de conferencia.
 
-Para RODAR um servidor, baixe o outro pacote: github.com/andrew-mauricio/Conan-Api
-FIMDEV'
-Conan-Api — SDK para escrever plugins
-======================================
-
-Voce precisa de UM header e de um compilador C++. Nada para linkar.
-
-    include/Conan/ConanPluginApi.h    a tabela da API — e' so isto
-    include/Conan/ConanPermission.h   consultar permissoes/VIP (opcional)
-    Exemplos/                         seis exemplos com fonte, para copiar
-    Docs/PARA-DESENVOLVEDORES.md      o guia
-    Docs/EVENTOS.md                   quais eventos do jogo existem
-
-COMECE ASSIM:
-
-    cp -r Exemplos/ExemploOla MeuPlugin
-    cd MeuPlugin && ./compilar.sh
-
-Seu plugin RECEBE a API numa tabela de funcoes e chama tudo por api->. Nenhuma
-linha do motor entra no seu binario — por isso qualquer compilador serve
-(Visual Studio de qualquer versao, MinGW, clang) e por isso o seu plugin so
-funciona com a Conan-Api instalada no servidor.
-
-Para INSTALAR o que voce compilou, e para rodar um servidor, baixe o pacote do
-servidor: e' outro download, com o carregador e os plugins prontos.
+Para RODAR um servidor, baixe o outro pacote:
+github.com/andrew-mauricio/Conan-Api

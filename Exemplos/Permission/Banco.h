@@ -1,77 +1,81 @@
 // ============================================================================
-//  Banco.h — a fronteira entre a DECISÃO (que dados guardar) e o MEIO (onde)
+//  Banco.h — the boundary between the DECISION (what to store) and the MEDIUM
+//            (where)
 //
-//  POR QUE ESTE ARQUIVO EXISTE
-//  ---------------------------
-//  O Armazem tinha 161 chamadas sqlite3_* espalhadas pelo corpo. A lógica de
-//  permissão (herança achatada, peso do casamento, negação específica, o
-//  instantâneo publicado por troca de ponteiro) está PROVADA rodando e não pode
-//  ser reescrita para caber num MySQL. Então quem muda é o meio, não a decisão:
-//  o Armazem passa a falar com esta interface, e existem duas implementações.
+//  WHY THIS FILE EXISTS
+//  --------------------
+//  Armazem had 161 sqlite3_* calls scattered through its body. The permission
+//  logic (flattened inheritance, match weight, specific denial, the snapshot
+//  published by pointer swap) is PROVED in production and can't be rewritten to
+//  fit MySQL. So what changes is the medium, not the decision: Armazem talks to
+//  this interface, and there are two implementations.
 //
-//  O dono de servidor escolhe no config.json com uma linha ("Database":
-//  "sqlite" ou "mysql") e não programa nada.
+//  The server owner picks in config.json with one line ("Database": "sqlite" or
+//  "mysql") and writes no code.
 //
 //  ┌──────────────────────────────────────────────────────────────────────┐
-//  │  INV-BANCO-001 · NADA AQUI É CHAMADO NA THREAD DO JOGO.              │
+//  │  INV-BANCO-001 · NOTHING HERE IS CALLED ON THE GAME'S THREAD.        │
 //  │                                                                      │
-//  │  A leitura de permissão (Armazem::Tem, NoGrupo, ExpiraEm, Grupos)    │
-//  │  responde do INSTANTÂNEO em memória e não toca em banco nenhum —     │
-//  │  nem SQLite. Só a thread escritora (Armazem::Trabalhar) e o arranque │
-//  │  (Armazem::Abrir) chamam esta interface.                             │
+//  │  Reading a permission (Armazem::Tem, NoGrupo, ExpiraEm, Grupos)      │
+//  │  answers from the in-memory SNAPSHOT and touches no database at all  │
+//  │  — not even SQLite. Only the writer thread (Armazem::Trabalhar) and  │
+//  │  startup (Armazem::Abrir) call this interface.                       │
 //  │                                                                      │
-//  │  Isto não é preferência de desenho: BancoMysql fala em socket. Um    │
-//  │  MySQL do outro lado do país, atrás de rede ruim, é problema do      │
-//  │  banco. Se essa espera acontecer no laço do jogo, o tick para, os    │
-//  │  jogadores levam timeout e caem — o problema do banco vira problema  │
-//  │  do servidor de jogo, que é justamente o que não pode acontecer.     │
+//  │  This isn't a design preference: BancoMysql talks over a socket. A   │
+//  │  MySQL on the other side of the country, behind a bad network, is    │
+//  │  the database's problem. If that wait happens in the game loop, the  │
+//  │  tick stops, players time out and drop — the database's problem      │
+//  │  becomes the game server's problem, which is exactly what must not   │
+//  │  happen.                                                             │
 //  └──────────────────────────────────────────────────────────────────────┘
 //
-//  INV-BANCO-002 · Falha de banco nunca vira falha de processo.
-//      Toda operação devolve bool e deixa o texto em Erro(). Nunca exceção
-//      atravessando a fronteira, nunca crash. Banco fora do ar significa
-//      escrita recusada e log — o instantâneo publicado continua servindo as
-//      leituras com o último estado bom.
+//  INV-BANCO-002 · A database failure never becomes a process failure.
+//      Every operation returns bool and leaves the text in Erro(). Never an
+//      exception crossing the boundary, never a crash. A database that's down
+//      means a refused write and a log line — the published snapshot keeps
+//      serving reads with the last good state.
 //
-//  INV-BANCO-003 · Instantâneo publicado nunca é meio construído.
-//      Reconstruir() monta em memória e só publica no fim. Qualquer falha de
-//      leitura aborta ANTES da publicação, e o instantâneo anterior continua
-//      valendo. Um MySQL que cai no meio da reconstrução deixa o servidor com
-//      permissões velhas e corretas, nunca com permissões pela metade.
+//  INV-BANCO-003 · A published snapshot is never half-built.
+//      Reconstruir() assembles in memory and only publishes at the end. Any
+//      read failure aborts BEFORE publication, and the previous snapshot stays
+//      in force. A MySQL that dies mid-rebuild leaves the server with old,
+//      correct permissions, never with half of them.
 //
-//  INV-BANCO-004 · O SQL não é o mesmo nos dois, e isso é explícito.
-//      Não existe "um SQL que serve aos dois". Cada dialeto tem o seu texto,
-//      lado a lado em Banco.cpp, e o que é DELIBERADAMENTE igual está escrito
-//      uma vez só (namespace `comum`) para não haver duas cópias da mesma
-//      verdade divergindo em silêncio. O que prova que os dois concordam não é
-//      o texto: é a bateria de comportamento rodando contra os dois bancos de
-//      verdade (testes/teste_banco.cpp).
+//  INV-BANCO-004 · The SQL isn't the same on both, and that's explicit.
+//      There's no "one SQL that serves both". Each dialect has its own text,
+//      side by side in Banco.cpp, and what is DELIBERATELY identical is written
+//      once (namespace `comum`) so there aren't two copies of the same truth
+//      quietly drifting apart. What proves the two agree isn't the text: it's
+//      the behavioural suite running against both real databases
+//      (testes/teste_banco.cpp).
 //
-//  INV-BANCO-006 · NUNCA dizer que usa um banco e usar outro.
-//      Se o config.json diz "mysql", o Permission ou fala com AQUELE MySQL ou
-//      não responde nada. Não existe queda para o SQLite local — nem calada,
-//      nem avisada em letras garrafais.
+//  INV-BANCO-006 · NEVER say you're using one database and use another.
+//      If config.json says "mysql", Permission either talks to THAT MySQL or
+//      answers nothing. There's no falling back to the local SQLite — not
+//      silently, and not with a warning in giant letters.
 //
-//      DANO SE QUEBRADO, e é o pior deste arquivo: os VIPs vendidos hoje vão
-//      para um arquivo local que ninguém olha. Quando o MySQL voltar, existem
-//      duas verdades sobre quem é VIP, e nenhuma delas é a verdade — não há
-//      como reconciliar, porque ninguém sabe qual escrita veio de qual. Um
-//      aviso no log não conserta isso: o dono só lê o log DEPOIS de o jogador
-//      reclamar, e a essa altura o estrago já está gravado nos dois lugares.
+//      THE DAMAGE IF BROKEN, and it's the worst in this file: the VIPs sold
+//      today go into a local file nobody looks at. When MySQL comes back there
+//      are two truths about who is VIP, and neither of them is the truth —
+//      there's no reconciling them, because nobody knows which write came from
+//      where. A log warning doesn't fix that: the owner only reads the log
+//      AFTER a player complains, and by then the damage is written in both
+//      places.
 //
-//      A degradação escolhida está em Armazem.h (INV-ARMAZEM-002): banco fora
-//      do ar = Permission AUSENTE, e ausente é um estado que a API já sabe
-//      tratar (`se_ausente` do ConanPermission.h). Ausente é honesto; "usando
-//      outro banco" é mentira gravada em disco.
+//      The degradation we chose is in Armazem.h (INV-ARMAZEM-002): database
+//      down = Permission ABSENT, and absent is a state the API already knows
+//      how to handle (`se_ausente` in ConanPermission.h). Absent is honest;
+//      "using a different database" is a lie written to disk.
 //
-//  INV-BANCO-005 · Interpolação de parâmetro só existe onde não há preparado.
-//      O SQLite recebe `?1` e liga o valor pelo sqlite3_bind_*: o valor nunca
-//      encosta no texto do SQL. O MySQL desta casa não tem prepared statement
-//      (ver MySqlCliente.h), então BancoMysql substitui `?N` pelo literal já
-//      passado por MySqlCliente::Citar() — que escapa E envolve em aspas. O
-//      substituidor PULA o que está dentro de literal e de crase, e RECUSA o
-//      comando se sobrar um `?N` sem valor: SQL com marcador solto não é
-//      enviado nunca.
+//  INV-BANCO-005 · Parameter interpolation only exists where there's no
+//                  prepared statement.
+//      SQLite gets `?1` and binds the value through sqlite3_bind_*: the value
+//      never touches the SQL text. This house's MySQL has no prepared
+//      statements (see MySqlCliente.h), so BancoMysql replaces `?N` with the
+//      literal already passed through MySqlCliente::Citar() — which escapes AND
+//      wraps in quotes. The substituter SKIPS anything inside a literal or
+//      backticks, and REFUSES the command if a `?N` is left without a value:
+//      SQL with a loose placeholder is never sent.
 // ============================================================================
 #pragma once
 
@@ -82,64 +86,65 @@
 
 namespace Perm
 {
-    // Também declarado em Armazem.h. Alias idêntico repetido é legal em C++, e
-    // este arquivo é incluído por Armazem.h — quem incluir só este continua
-    // compilando.
+    // Also declared in Armazem.h. An identical repeated alias is legal C++, and
+    // this file is included by Armazem.h — anyone including only this one still
+    // compiles.
     using FnLog = void (*)(const char*);
 
-    // ── uma linha do resultado ───────────────────────────────────────────────
+    // ── one row of a result ──────────────────────────────────────────────────
     //
-    // Só texto e inteiro, porque é só isso que este esquema guarda. Não há
-    // ponto flutuante, não há BLOB. Interface pequena é interface que as duas
-    // implementações conseguem cumprir do mesmo jeito.
+    // Text and integers only, because that's all this schema stores. No
+    // floating point, no BLOBs. A small interface is an interface both
+    // implementations can honour the same way.
     class ILinha
     {
     public:
         virtual ~ILinha() = default;
         virtual int         Colunas()        const = 0;
-        // nullptr quando a coluna é NULL. String vazia vem como "" — são
-        // coisas diferentes e os dois bancos distinguem as duas.
+        // nullptr when the column is NULL. An empty string comes back as "" —
+        // they're different things and both databases tell them apart.
         virtual const char* Texto(int col)   const = 0;
-        // 0 quando NULL ou quando o texto não é número. O esquema só chama
-        // isto em coluna declarada inteira.
+        // 0 when NULL, or when the text isn't a number. The schema only calls
+        // this on a column declared as an integer.
         virtual int64_t     Inteiro(int col) const = 0;
     };
 
     using FnLinha = void (*)(const ILinha&, void*);
 
-    // ── um comando com parâmetros ────────────────────────────────────────────
+    // ── a command with parameters ────────────────────────────────────────────
     class IComando
     {
     public:
         virtual ~IComando() = default;
 
-        // Posição 1..N, como o `?1` do SQL. `nullptr` liga SQL NULL (e não
-        // string vazia: ligar "" onde se queria NULL grava dado errado sem
-        // erro nenhum).
+        // Position 1..N, like SQL's `?1`. `nullptr` binds SQL NULL (and not an
+        // empty string: binding "" where you meant NULL writes wrong data with
+        // no error at all).
         virtual bool LigarTexto(int pos, const char* v)   = 0;
         virtual bool LigarInteiro(int pos, int64_t v)     = 0;
 
         virtual bool Executar()                           = 0;
         virtual bool Consultar(FnLinha fn, void* ctx)     = 0;
 
-        // Linhas afetadas pelo ÚLTIMO Executar deste comando.
+        // Rows affected by this command's LAST Executar.
         //
-        // CUIDADO REGISTRADO: no MySQL este número NÃO serve para descobrir se
-        // uma chave existe. `INSERT ... ON DUPLICATE KEY UPDATE` devolve 0
-        // quando a linha já existia com os mesmos valores — indistinguível de
-        // "não achei nada para inserir". O código que precisava dessa resposta
-        // (conceder para um grupo inexistente) passou a PERGUNTAR o id do
-        // grupo antes, em vez de inferir do contador. Ver Armazem::Trabalhar.
+        // A RECORDED TRAP: on MySQL this number is NOT usable to find out
+        // whether a key exists. `INSERT ... ON DUPLICATE KEY UPDATE` returns 0
+        // when the row already existed with the same values — indistinguishable
+        // from "found nothing to insert". The code that needed that answer
+        // (granting to a group that doesn't exist) now ASKS for the group's id
+        // first, instead of inferring it from the counter. See
+        // Armazem::Trabalhar.
         virtual int64_t Mudancas() const                  = 0;
     };
 
-    // ── o SQL de um dialeto ──────────────────────────────────────────────────
+    // ── one dialect's SQL ────────────────────────────────────────────────────
     //
-    // Cada campo é UM comando. `esquema` é vetor terminado em nullptr porque o
-    // MySQL desta casa não tem CLIENT_MULTI_STATEMENTS (desligado de propósito,
-    // ver MySqlCliente.h) e portanto não aceita DDL com vários `;` num pacote
-    // só. O SQLite aceitaria; roda um por um do mesmo jeito, para os dois
-    // caminhos serem o mesmo caminho.
+    // Each field is ONE command. `esquema` is a nullptr-terminated array
+    // because this house's MySQL has no CLIENT_MULTI_STATEMENTS (switched off
+    // on purpose, see MySqlCliente.h) and so won't take DDL with several `;` in
+    // one packet. SQLite would accept it; it runs them one at a time anyway, so
+    // that both paths are the same path.
     struct Sql
     {
         const char* const* esquema;
@@ -147,7 +152,7 @@ namespace Perm
         const char* meta_gravar_versao;
         const char* meta_ler_versao;
 
-        // configuração (permission.json -> banco)
+        // configuration (permission.json -> database)
         const char* grupo_apelido_do_renome;
         const char* grupo_renomear;
         const char* grupo_upsert;
@@ -159,7 +164,7 @@ namespace Perm
         const char* permissao_apelido_inserir;
         const char* contar_padrao;
 
-        // reconstrução do instantâneo
+        // rebuilding the snapshot
         const char* ler_grupos;
         const char* ler_heranca;
         const char* ler_grupo_permissao;
@@ -168,7 +173,7 @@ namespace Perm
         const char* ler_jogador_grupo;
         const char* ler_jogador_permissao;
 
-        // escrita
+        // writing
         const char* jogador_garantir;
         const char* grupo_id_por_chave_ou_apelido;
         const char* vinculo_upsert;
@@ -178,43 +183,44 @@ namespace Perm
         const char* faxina_vencidos;
     };
 
-    // ── o que o config.json diz sobre o banco ────────────────────────────────
+    // ── what config.json says about the database ─────────────────────────────
     //
-    // Os nomes das chaves seguem a convenção que a comunidade de servidores de
-    // sobrevivência já conhece — quem vem de outra API reconhece de imediato e
-    // não precisa aprender nome novo.
+    // The key names follow the convention the survival-server community
+    // already knows — anyone arriving from another API recognises them at once
+    // and doesn't have to learn new names.
     struct ConfigBanco
     {
         enum Tipo { SQLITE, MYSQL };
 
         Tipo        tipo   = SQLITE;
-        std::string caminhoSqlite;        // já resolvido (DbPathOverride aplicado)
+        std::string caminhoSqlite;        // already resolved (DbPathOverride applied)
         std::string host   = "localhost";
-        // NÃO é o padrão que o dono recebe: com tipo=MYSQL, LerConfigBanco
-        // RECUSA quando MysqlUser vem vazio (INV-CONFIG-003), justamente para
-        // que este "root" nunca valha por omissão — escolher sozinho a conta
-        // mais poderosa do banco é fallback que amplia permissão (§11). Ele
-        // sobrevive aqui só porque no sqlite o campo é inerte. Quem construir
-        // um ConfigBanco na mão, sem passar por LerConfigBanco, contorna a
-        // guarda: preencha o usuário.
+        // This is NOT the default the owner gets: with tipo=MYSQL,
+        // LerConfigBanco REFUSES when MysqlUser is empty (INV-CONFIG-003),
+        // precisely so this "root" never applies by omission — picking the
+        // database's most powerful account on your own is a fallback that
+        // widens permission (§11). It survives here only because on sqlite the
+        // field is inert. Anyone building a ConfigBanco by hand, without going
+        // through LerConfigBanco, bypasses the guard: fill in the user.
         std::string usuario= "root";
         std::string senha;
-        // SEM padrão, de propósito: "onde gravar" não se adivinha. Com
-        // Database=mysql e sem MysqlDB, LerConfigBanco RECUSA. Ver lá o defeito
-        // que isto conserta (um banco chutado é dado gravado no lugar errado
-        // sem erro nenhum).
+        // NO default, on purpose: "where to write" is not something to guess.
+        // With Database=mysql and no MysqlDB, LerConfigBanco REFUSES. See there
+        // for the defect this fixes (a guessed database is data written in the
+        // wrong place with no error at all).
         std::string banco;
         uint16_t    porta  = 3306;
 
-        // Prazos do cliente MySQL, em milissegundos. Existem no config porque
-        // "o MySQL do meu VPS demora 8 s para aceitar" é um caso real, e o
-        // padrão de 5 s viraria "o Permission nunca sobe" sem explicação. Zero
-        // ou negativo cai no padrão — "sem limite" não é opção (INV-MYSQL-002).
+        // The MySQL client's timeouts, in milliseconds. They're in the config
+        // because "my VPS's MySQL takes 8 s to accept" is a real case, and a
+        // 5 s default would turn into "Permission never comes up" with no
+        // explanation. Zero or negative falls back to the default — "no limit"
+        // is not an option (INV-MYSQL-002).
         int         msConectar = 5000;
         int         msOperar   = 10000;
     };
 
-    // ── o banco ──────────────────────────────────────────────────────────────
+    // ── the database ─────────────────────────────────────────────────────────
     class IBanco
     {
     public:
@@ -223,111 +229,114 @@ namespace Perm
         virtual bool Abrir()  = 0;
         virtual void Fechar() = 0;
 
-        // false depois de a conexão cair. No SQLite é "o handle existe"; num
-        // arquivo local não há o que cair no meio, e é por isso que a diferença
-        // entre os dois está aqui e não espalhada pelo Armazem.
+        // false once the connection has dropped. On SQLite it's "the handle
+        // exists"; in a local file there's nothing to drop mid-way, and that's
+        // why the difference between the two lives here instead of scattered
+        // through Armazem.
         virtual bool Vivo() const = 0;
 
-        // Só a thread escritora chama. Devolve false e deixa o motivo em
-        // Erro(). NÃO reexecuta nada por conta própria: quem decide repetir é
-        // o Armazem, que sabe se a tarefa é idempotente.
+        // Only the writer thread calls this. Returns false and leaves the
+        // reason in Erro(). It does NOT re-run anything on its own: deciding to
+        // retry is Armazem's call, since it knows whether the task is
+        // idempotent.
         virtual bool Reconectar() = 0;
 
-        // ── a ÚNICA coisa aqui que outra thread pode chamar ─────────────────
+        // ── the ONLY thing here another thread may call ─────────────────────
         //
-        // Chamada por Armazem::Fechar(), da thread que desliga o servidor,
-        // ENQUANTO a thread escritora pode estar dentro de uma operação. Faz a
-        // operação em curso voltar com erro na hora, para o join não esperar o
-        // prazo do banco.
+        // Called by Armazem::Fechar(), from the thread shutting the server
+        // down, WHILE the writer thread may be inside an operation. It makes
+        // the in-flight operation come back with an error immediately, so the
+        // join doesn't wait out the database's timeout.
         //
-        // POR QUE ISTO EXISTE: com MySQL num host que aceitou a conexão e
-        // emudeceu, uma reconstrução são 7 consultas de até msOperar cada —
-        // até ~70 s de servidor pendurado no desligamento com os padrões. O
-        // dono faz o que qualquer um faria: mata o processo. Matar o Conan no
-        // desligamento perde o save do mundo. Um problema do BANCO não pode
-        // terminar em save perdido.
+        // WHY THIS EXISTS: with a MySQL on a host that accepted the connection
+        // and then went silent, a rebuild is 7 queries of up to msOperar each —
+        // up to ~70 s of server hanging at shutdown with the defaults. The
+        // owner does what anyone would: kills the process. Killing Conan during
+        // shutdown loses the world save. A DATABASE problem must not end in a
+        // lost save.
         //
-        // É DEFINITIVO: depois disto o banco não volta a servir. O único
-        // chamador é o desligamento.
+        // IT IS FINAL: after this the database never serves again. The only
+        // caller is shutdown.
         virtual void Interromper() = 0;
 
         virtual bool Executar(const char* sql)                          = 0;
         virtual bool Consultar(const char* sql, FnLinha fn, void* ctx)  = 0;
         virtual std::unique_ptr<IComando> Preparar(const char* sql)     = 0;
 
-        virtual bool Iniciar()   = 0;      // transação
+        virtual bool Iniciar()   = 0;      // transaction
         virtual bool Confirmar() = 0;
         virtual bool Desfazer()  = 0;
 
         virtual const char* Erro() const = 0;
-        virtual const char* Nome() const = 0;      // "sqlite" ou "mysql"
+        virtual const char* Nome() const = 0;      // "sqlite" or "mysql"
         virtual const Sql&  S()    const = 0;
 
-        // O que dizer ao dono do servidor quando a criação do esquema falha.
-        // Mora aqui porque a resposta é diferente em cada meio — no sqlite é
-        // pasta/permissão de arquivo, no MySQL é GRANT — e o Armazem não tem
-        // (nem deve ter) opinião sobre isso.
+        // What to tell the server owner when creating the schema fails. It
+        // lives here because the answer differs per medium — on sqlite it's a
+        // folder or file permission, on MySQL it's a GRANT — and Armazem has no
+        // opinion about that (and shouldn't).
         virtual const char* DicaEsquema() const = 0;
     };
 
-    // Fábrica. Devolve nullptr só se `cfg.tipo` for desconhecido — o que não
-    // acontece, porque LerConfigBanco recusa valor inválido antes.
+    // Factory. Returns nullptr only if `cfg.tipo` is unknown — which doesn't
+    // happen, because LerConfigBanco refuses an invalid value first.
     std::unique_ptr<IBanco> CriarBanco(const ConfigBanco& cfg, FnLog log);
 
-    // As duas implementações. Moram em BancoSqlite.cpp e BancoMysql.cpp para
-    // que cada meio possa ser auditado sozinho; quem usa chama CriarBanco().
+    // The two implementations. They live in BancoSqlite.cpp and BancoMysql.cpp
+    // so each medium can be audited on its own; callers use CriarBanco().
     std::unique_ptr<IBanco> CriarBancoSqlite(const ConfigBanco& cfg, FnLog log);
     std::unique_ptr<IBanco> CriarBancoMysql (const ConfigBanco& cfg, FnLog log);
 
-    // Os dois dialetos, lado a lado em Banco.cpp. Expostos para que o teste
-    // consiga percorrer TODO comando que o Armazem emite e executá-lo contra o
-    // banco de verdade — um `const char*` que nunca foi preparado é SQL que
-    // ninguém sabe se compila.
+    // The two dialects, side by side in Banco.cpp. Exposed so the test can walk
+    // EVERY command Armazem emits and run it against the real database — a
+    // `const char*` that was never prepared is SQL nobody knows compiles.
     const Sql& SqlDoSqlite();
     const Sql& SqlDoMysql();
 
-    // ── leitura do config.json ───────────────────────────────────────────────
+    // ── reading config.json ──────────────────────────────────────────────────
     //
-    // Lê Database / MysqlHost / MysqlUser / MysqlPass / MysqlDB / MysqlPort /
-    // DbPathOverride. As demais chaves do arquivo (grupos, apelidos, _fronteira,
-    // _privacidade, identidade…) são preservadas e ignoradas aqui.
+    // Reads Database / MysqlHost / MysqlUser / MysqlPass / MysqlDB / MysqlPort
+    // / DbPathOverride. The file's other keys (groups, aliases, _fronteira,
+    // _privacidade, identity…) are preserved and ignored here.
     //
-    // `caminhoPadraoDb` é o que a ConanApi mandou (CaminhoDados("Permission",
-    // "permission.db")); DbPathOverride, quando presente, substitui.
+    // `caminhoPadraoDb` is what ConanApi handed over
+    // (CaminhoDados("Permission", "permission.db")); DbPathOverride, when
+    // present, replaces it.
     //
-    // Devolve false com motivo em `erro` quando o arquivo existe e está errado
-    // — inclusive quando "Database" traz um valor que não é nem sqlite nem
-    // mysql. Recusar é obrigatório: cair calado no sqlite depois de o dono
-    // escrever "mysqll" grava os VIPs num arquivo local que ninguém olha, e o
-    // sintoma só aparece quando alguém procura o dado no MySQL e não acha.
+    // Returns false with the reason in `erro` when the file exists and is wrong
+    // — including when "Database" carries a value that's neither sqlite nor
+    // mysql. Refusing is mandatory: quietly falling back to sqlite after the
+    // owner typed "mysqll" writes the VIPs into a local file nobody looks at,
+    // and the symptom only appears when somebody goes looking for the data in
+    // MySQL and doesn't find it.
     //
-    // Arquivo AUSENTE não é erro: devolve true com os padrões (sqlite no
-    // caminho da ConanApi), que é exatamente como o plugin já se comportava.
+    // A MISSING file is not an error: it returns true with the defaults (sqlite
+    // at ConanApi's path), which is exactly how the plugin already behaved.
     bool LerConfigBanco(const char* caminhoJson, const char* caminhoPadraoDb,
                         ConfigBanco& saida, std::string& erro);
 
-    // ── o resto do config.json, já em memória ────────────────────────────────
+    // ── the rest of config.json, already in memory ───────────────────────────
     //
-    // POR QUE O JSON CONTINUA SENDO LIDO PELO json1 DO SQLITE
-    // Antes, a configuração virava banco por um SQL só (json_each + json_extract
-    // cruzando com as tabelas reais). Isso não atravessa para o MySQL: json_each
-    // é função de tabela do SQLite, o MySQL 5.7 não tem JSON_TABLE nenhum, e o
-    // 8.0 tem uma sintaxe diferente. Escrever um parser de JSON à mão era a
-    // outra saída — 200 linhas novas lendo arquivo que o dono edita à mão, ou
-    // seja, entrada hostil por definição.
+    // WHY THE JSON IS STILL READ BY SQLITE'S json1
+    // Configuration used to become database rows through one SQL statement
+    // (json_each + json_extract joined against the real tables). That doesn't
+    // carry over to MySQL: json_each is a SQLite table function, MySQL 5.7 has
+    // no JSON_TABLE at all, and 8.0's syntax is different. Writing a JSON
+    // parser by hand was the other way out — 200 new lines reading a file the
+    // owner edits by hand, which is hostile input by definition.
     //
-    // A saída é a terceira: o json1 continua fazendo o trabalho que já fazia,
-    // num SQLite EM MEMÓRIA (`:memory:`), que existe só para isso e some no
-    // fim. O amalgamation já está dentro do .dll de qualquer jeito. O que muda
-    // é que o resultado sai em struct, e quem grava é a interface — então o
-    // mesmo caminho de configuração serve aos dois bancos.
+    // The way out is a third one: json1 keeps doing the job it already did, in
+    // an IN-MEMORY SQLite (`:memory:`) that exists only for this and vanishes
+    // afterwards. The amalgamation is inside the .dll either way. What changes
+    // is that the result comes out as a struct, and the interface does the
+    // writing — so the same configuration path serves both databases.
     struct ConfigGrupo
     {
         std::string chave, nome, era;
         int64_t     prioridade = 0;
         bool        padrao     = false;
         std::vector<std::string>                 herda;
-        std::vector<std::pair<std::string,bool>> permissoes;   // (nó, nega)
+        std::vector<std::pair<std::string,bool>> permissoes;   // (node, deny)
     };
 
     struct ConfigPermissao
@@ -336,9 +345,9 @@ namespace Perm
         std::vector<std::pair<std::string,std::string>>     apelidosDeNo;
     };
 
-    // false quando o arquivo existe e não é JSON válido, ou quando um valor
-    // não cabe nos tetos da ABI. `existe` sai false quando não há arquivo — e
-    // isso não é erro, é "usa o que já está no banco".
+    // false when the file exists and isn't valid JSON, or when a value doesn't
+    // fit the ABI's caps. `existe` comes back false when there's no file — and
+    // that isn't an error, it's "use whatever is already in the database".
     bool LerConfigPermissao(const char* caminhoJson, ConfigPermissao& saida,
                             bool& existe, std::string& erro);
 }

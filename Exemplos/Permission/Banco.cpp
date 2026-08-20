@@ -1,35 +1,37 @@
 // ============================================================================
-//  Banco.cpp — os DOIS dialetos lado a lado, e a leitura do config.json
+//  Banco.cpp — the TWO dialects side by side, and reading config.json
 //
-//  ESTE É O ARQUIVO QUE SE AUDITA QUANDO OS DOIS BANCOS DISCORDAM.
+//  THIS IS THE FILE YOU AUDIT WHEN THE TWO DATABASES DISAGREE.
 //
-//  A regra que o organiza: o que é deliberadamente IGUAL nos dois está escrito
-//  UMA vez (namespace `comum`); o que é diferente está escrito DUAS vezes, uma
-//  embaixo da outra, para a diferença ser visível de relance. Não existe aqui
-//  "um SQL que serve aos dois por sorte" — o que existe é SQL igual porque foi
-//  conferido nos dois servidores de verdade, e SQL diferente porque tem de ser.
+//  The rule that organises it: what is deliberately THE SAME in both is written
+//  ONCE (namespace `comum`); what differs is written TWICE, one under the
+//  other, so the difference is visible at a glance. There is no "SQL that
+//  happens to serve both" here — what there is, is SQL that's identical because
+//  it was checked against both real servers, and SQL that differs because it
+//  has to.
 //
-//  O QUE FOI MEDIDO, NÃO SUPOSTO (18/08/2026, MySQL 8.4.11 e MariaDB 10.11)
-//  ------------------------------------------------------------------------
-//  · identificador `no` sem aspas: aceito nos dois. `NO` é palavra NÃO
-//    reservada no MySQL. Ainda assim o esquema do MySQL escreve tudo com crase,
-//    porque o esquema é texto exclusivo dele e crase não custa nada;
-//  · `INSERT ... SELECT ... ON DUPLICATE KEY UPDATE`: aceito nos dois;
-//  · o SELECT determinístico de id (tabela derivada + ORDER BY ord LIMIT 1):
-//    aceito nos dois, e no SQLite também;
-//  · COLLATE utf8mb4_bin deixa a comparação SENSÍVEL A MAIÚSCULAS, que é como
-//    o SQLite compara TEXT por padrão (BINARY). Sem isto, o padrão do MySQL 8
-//    (utf8mb4_0900_ai_ci) faria "vip" e "VIP" virarem o MESMO grupo, e dois
-//    jogadores de id diferente virarem o mesmo jogador. Conferido: com
-//    utf8mb4_bin os dois bancos guardam 'vip' e 'VIP' como linhas separadas;
-//  · DIVERGÊNCIA CONHECIDA E DECLARADA: utf8mb4_bin é PAD SPACE. `chave='vip '`
-//    casa com 'vip' no MySQL e NÃO casa no SQLite (medido: 1 contra 0). Para a
-//    configuração isso está FECHADO na origem — ValidarChave() recusa chave com
-//    espaço na ponta. Para o id de jogador que chega pela ABI, não há como
-//    fechar sem mudar a ABI: fica como risco residual declarado.
+//  WHAT WAS MEASURED, NOT ASSUMED (2026-08-18, MySQL 8.4.11 and MariaDB 10.11)
+//  ---------------------------------------------------------------------------
+//  · the identifier `no` without quotes: accepted by both. `NO` is a NON-
+//    reserved word in MySQL. Even so the MySQL schema backticks everything,
+//    because the schema is text exclusive to it and backticks cost nothing;
+//  · `INSERT ... SELECT ... ON DUPLICATE KEY UPDATE`: accepted by both;
+//  · the deterministic id SELECT (a derived table + ORDER BY ord LIMIT 1):
+//    accepted by both, and by SQLite too;
+//  · COLLATE utf8mb4_bin makes comparison CASE SENSITIVE, which is how SQLite
+//    compares TEXT by default (BINARY). Without it, MySQL 8's default
+//    (utf8mb4_0900_ai_ci) would make "vip" and "VIP" the SAME group, and two
+//    players with different ids the same player. Checked: with utf8mb4_bin both
+//    databases store 'vip' and 'VIP' as separate rows;
+//  · A KNOWN AND DECLARED DIVERGENCE: utf8mb4_bin is PAD SPACE. `chave='vip '`
+//    matches 'vip' on MySQL and does NOT match on SQLite (measured: 1 against
+//    0). For configuration this is CLOSED at the source — ValidarChave()
+//    refuses a key with a trailing space. For the player id arriving through
+//    the ABI there's no closing it without changing the ABI: it stands as a
+//    declared residual risk.
 // ============================================================================
 #include "Banco.h"
-#include "Armazem.h"                     // só pelos tetos MAX_ID/MAX_GRUPO/MAX_NO
+#include "Armazem.h"                     // only for MAX_ID/MAX_GRUPO/MAX_NO caps
 #include "terceiros/sqlite3/sqlite3.h"
 
 #include <cstdio>
@@ -42,12 +44,12 @@ namespace Perm
 namespace
 {
 // ============================================================================
-//  1 · ESQUEMA — escrito duas vezes, de propósito
+//  1 · THE SCHEMA — written twice, on purpose
 // ============================================================================
 
 // ── SQLite ──────────────────────────────────────────────────────────────────
-// Byte a byte o mesmo esquema que já rodava, só partido em um comando por
-// entrada (ver o comentário de Sql::esquema em Banco.h).
+// Byte for byte the same schema that was already running, only split into one
+// command per entry (see Sql::esquema's comment in Banco.h).
 const char* const ESQUEMA_SQLITE[] = {
 "CREATE TABLE IF NOT EXISTS meta("
 "    chave TEXT PRIMARY KEY,"
@@ -108,8 +110,8 @@ const char* const ESQUEMA_SQLITE[] = {
 "    para TEXT NOT NULL"
 ");",
 
-// Auditoria. Existe porque "quem deu VIP para esse cara?" é a primeira
-// pergunta de todo dono de servidor com mais de um admin.
+// The audit log. It exists because "who gave that guy VIP?" is the first
+// question every server owner with more than one admin asks.
 "CREATE TABLE IF NOT EXISTS diario("
 "    id      INTEGER PRIMARY KEY AUTOINCREMENT,"
 "    em      INTEGER NOT NULL,"
@@ -125,55 +127,56 @@ nullptr };
 
 // ── MySQL / MariaDB ─────────────────────────────────────────────────────────
 //
-// AS DECISÕES QUE NÃO SÃO TRADUÇÃO MECÂNICA, E O DEFEITO QUE CADA UMA EVITA:
+// THE DECISIONS THAT AREN'T MECHANICAL TRANSLATION, AND THE DEFECT EACH AVOIDS:
 //
-//  · ENGINE=InnoDB explícito. MyISAM ACEITA a sintaxe de FOREIGN KEY e a
-//    IGNORA em silêncio — o esquema "cria" e as chaves estrangeiras
-//    simplesmente não existem. Num servidor com default-storage-engine=MyISAM
-//    o ON DELETE CASCADE viraria decoração e apagar um grupo deixaria vínculo
-//    órfão. InnoDB escrito à mão é a única forma de isso não depender da
-//    configuração da máquina do dono.
+//  · An explicit ENGINE=InnoDB. MyISAM ACCEPTS FOREIGN KEY syntax and IGNORES
+//    it silently — the schema "creates" and the foreign keys simply don't
+//    exist. On a server with default-storage-engine=MyISAM, ON DELETE CASCADE
+//    would become decoration and deleting a group would leave orphaned links.
+//    InnoDB written by hand is the only way that doesn't depend on the owner
+//    machine's configuration.
 //
-//  · COLLATE=utf8mb4_bin em toda tabela. Ver o cabeçalho: sem isto, "vip" e
-//    "VIP" viram o mesmo grupo e dois jogadores viram um. É a diferença que
-//    mais silenciosamente troca dado de dono.
+//  · COLLATE=utf8mb4_bin on every table. See the header: without it, "vip" and
+//    "VIP" become the same group and two players become one. It's the
+//    difference that most quietly moves data between owners.
 //
-//  · TEXT (e não VARCHAR) para todo campo livre — nome, visto_nome, quem,
-//    alvo, detalhe, valor. Motivo: o MySQL destes servidores roda com
-//    STRICT_TRANS_TABLES (medido), e nesse modo gravar 300 caracteres num
-//    VARCHAR(256) é ERRO, não truncamento. O SQLite aceitaria. Um rótulo de
-//    grupo comprido no permission.json derrubaria a configuração inteira só no
-//    MySQL. TEXT não tem esse limite e iguala o comportamento dos dois.
+//  · TEXT (and not VARCHAR) for every free field — nome, visto_nome, quem,
+//    alvo, detalhe, valor. Reason: these servers' MySQL runs with
+//    STRICT_TRANS_TABLES (measured), and in that mode writing 300 characters
+//    into a VARCHAR(256) is an ERROR, not truncation. SQLite would accept it. A
+//    long group label in permission.json would take down the whole
+//    configuration on MySQL alone. TEXT has no such limit and makes both behave
+//    the same.
 //
-//  · VARCHAR com tamanho igual ao teto da ABI onde a coluna é INDEXADA
-//    (índice precisa de tamanho): id/chave/apelido de grupo = 64
-//    (MAX_ID/MAX_GRUPO), nó de permissão = 127 (MAX_NO-1, que é o maior nó que
-//    a ABI consegue sequer perguntar — ComprimentoLimitado exige o '\0' dentro
-//    de MAX_NO bytes). Guardar 128 seria guardar um valor que nenhuma consulta
-//    alcança.
+//  · VARCHAR sized to the ABI's cap wherever the column is INDEXED (an index
+//    needs a length): group id/key/alias = 64 (MAX_ID/MAX_GRUPO), permission
+//    node = 127 (MAX_NO-1, the longest node the ABI can even ask about —
+//    ComprimentoLimitado requires the '\0' within MAX_NO bytes). Storing 128
+//    would mean storing a value no query can reach.
 //
-//    ┌ CORREÇÃO DE UMA AFIRMAÇÃO MINHA QUE ERA FALSA (18/08/2026) ───────────┐
-//    │ Este comentário dizia que o 127 existia para caber no limite de 767   │
-//    │ bytes do InnoDB antigo, porque `PRIMARY KEY(jogador,no)` daria        │
-//    │ 64*4 + 128*4 = 768. Fui medir num MySQL 5.7.44 de verdade, subido com │
-//    │ innodb_large_prefix=OFF e ROW_FORMAT=COMPACT (o pior caso), e a       │
-//    │ afirmação NÃO se sustentou: a tabela com VARCHAR(128) foi criada sem  │
-//    │ erro nenhum.                                                          │
+//    ┌ CORRECTING A CLAIM OF MINE THAT WAS FALSE (2026-08-18) ───────────────┐
+//    │ This comment used to say the 127 existed to fit old InnoDB's 767-byte │
+//    │ limit, because `PRIMARY KEY(jogador,no)` would give 64*4 + 128*4 =    │
+//    │ 768. I went and measured on a real MySQL 5.7.44, started with         │
+//    │ innodb_large_prefix=OFF and ROW_FORMAT=COMPACT (the worst case), and  │
+//    │ the claim did NOT hold: the table with VARCHAR(128) was created with  │
+//    │ no error at all.                                                      │
 //    │                                                                       │
-//    │ O limite de 767 bytes é POR COLUNA indexada, não pela soma da chave   │
-//    │ composta. Medido no mesmo servidor:                                   │
-//    │   VARCHAR(200) (800 B) numa coluna só -> ERROR 1071 "key was too long"│
-//    │   VARCHAR(191) (764 B) numa coluna só -> criou                        │
-//    │   (64 + 128) = 768 B somados em duas colunas -> criou                 │
+//    │ The 767-byte limit is PER INDEXED COLUMN, not the sum of a composite  │
+//    │ key. Measured on the same server:                                     │
+//    │   VARCHAR(200) (800 B) in one column  -> ERROR 1071 "key was too long"│
+//    │   VARCHAR(191) (764 B) in one column  -> created                      │
+//    │   (64 + 128) = 768 B across two columns -> created                    │
 //    │                                                                       │
-//    │ Ou seja: o motivo estava errado, o número está certo por outro        │
-//    │ motivo. Ficou escrito porque comentário que justifica com um perigo   │
-//    │ inexistente é pior que comentário nenhum — o próximo a ler acredita.  │
+//    │ So: the reason was wrong, the number is right for a different reason. │
+//    │ It's written down because a comment justifying itself with a danger   │
+//    │ that doesn't exist is worse than no comment — the next reader         │
+//    │ believes it.                                                          │
 //    └───────────────────────────────────────────────────────────────────────┘
 //
-//  · BIGINT AUTO_INCREMENT no lugar de INTEGER AUTOINCREMENT.
+//  · BIGINT AUTO_INCREMENT in place of INTEGER AUTOINCREMENT.
 //
-//  · Índice explícito na coluna de FK (o MySQL exige; o SQLite não).
+//  · An explicit index on the FK column (MySQL requires it; SQLite doesn't).
 const char* const ESQUEMA_MYSQL[] = {
 "CREATE TABLE IF NOT EXISTS `meta`("
 "    `chave` VARCHAR(64) NOT NULL,"
@@ -263,12 +266,12 @@ const char* const ESQUEMA_MYSQL[] = {
 nullptr };
 
 // ============================================================================
-//  2 · COMANDOS IGUAIS NOS DOIS — escritos uma vez só, de propósito
+//  2 · COMMANDS IDENTICAL IN BOTH — written once, on purpose
 //
-//  Escrever estes duas vezes seria criar duas cópias da mesma verdade. Elas
-//  divergem, e ninguém percebe até o dia em que importa. O que prova que estão
-//  certos NOS DOIS não é o texto: é a bateria de comportamento rodando contra
-//  o SQLite e contra o MySQL de verdade (testes/teste_banco.cpp).
+//  Writing these twice would create two copies of the same truth. They drift,
+//  and nobody notices until the day it matters. What proves they're right in
+//  BOTH isn't the text: it's the behavioural suite running against real SQLite
+//  and real MySQL (testes/teste_banco.cpp).
 // ============================================================================
 namespace comum
 {
@@ -282,13 +285,13 @@ namespace comum
     const char* const GRUPO_PERMISSAO_LIMPAR   = "DELETE FROM grupo_permissao;";
     const char* const PERMISSAO_APELIDO_LIMPAR = "DELETE FROM permissao_apelido;";
 
-    // Sem INSERT OR IGNORE / INSERT IGNORE nos três abaixo, e isso é decisão,
-    // não esquecimento. As três tabelas acabaram de ser esvaziadas, então
-    // duplicata só pode vir do próprio permission.json repetindo uma linha —
-    // e isso é resolvido ANTES, deduplicando em C++ (ver AplicarConfig), com
-    // log. O `INSERT IGNORE` do MySQL, além de ignorar chave repetida, engole
-    // violação de chave estrangeira e truncamento de dado: usá-lo aqui
-    // transformaria um erro real em silêncio.
+    // No INSERT OR IGNORE / INSERT IGNORE in the three below, and that's a
+    // decision, not an oversight. The three tables were just emptied, so a
+    // duplicate can only come from permission.json itself repeating a line —
+    // and that's handled EARLIER, by deduplicating in C++ (see AplicarConfig),
+    // with a log line. MySQL's `INSERT IGNORE`, besides ignoring a repeated
+    // key, swallows foreign-key violations and data truncation: using it here
+    // would turn a real error into silence.
     const char* const GRUPO_HERDA_INSERIR =
         "INSERT INTO grupo_herda(filho,pai) "
         "SELECT f.id, p.id FROM grupo f, grupo p "
@@ -304,7 +307,7 @@ namespace comum
     const char* const CONTAR_PADRAO =
         "SELECT count(*) FROM grupo WHERE padrao=1;";
 
-    // ── reconstrução do instantâneo ─────────────────────────────────────────
+    // ── rebuilding the snapshot ─────────────────────────────────────────────
     const char* const LER_GRUPOS          = "SELECT id,chave,prioridade,padrao FROM grupo;";
     const char* const LER_HERANCA         = "SELECT filho,pai FROM grupo_herda;";
     const char* const LER_GRUPO_PERMISSAO = "SELECT grupo,no,nega FROM grupo_permissao;";
@@ -317,19 +320,19 @@ namespace comum
     const char* const LER_JOGADOR_PERMISSAO =
         "SELECT jogador,no,nega,expira_em FROM jogador_permissao;";
 
-    // ── escrita ─────────────────────────────────────────────────────────────
+    // ── writing ─────────────────────────────────────────────────────────────
     //
-    // O id do grupo pela chave ATUAL ou por qualquer APELIDO dele. É o que faz
-    // `/perm dar Fulano vip` continuar funcionando depois de o grupo ter sido
-    // renomeado para "premium".
+    // The group's id by its CURRENT key or by any of its ALIASES. It's what
+    // keeps `!perm dar Fulano vip` working after the group was renamed to
+    // "premium".
     //
-    // POR QUE A TABELA DERIVADA COM `ord`, em vez de UNION ALL + LIMIT 1: sem
-    // o ORDER BY, qual das duas metades vem primeiro é escolha do otimizador.
-    // Se alguém criar um grupo cuja chave é o APELIDO de outro grupo, as duas
-    // metades devolvem linha e o resultado passa a depender do plano de
-    // execução — o mesmo comando dando respostas diferentes em bancos
-    // diferentes, ou no mesmo banco depois de um ANALYZE. `ord` fixa a
-    // precedência: chave atual ganha do apelido, sempre.
+    // WHY THE DERIVED TABLE WITH `ord`, instead of UNION ALL + LIMIT 1: without
+    // the ORDER BY, which of the two halves comes first is the optimiser's
+    // choice. If somebody creates a group whose key is another group's ALIAS,
+    // both halves return a row and the result starts depending on the execution
+    // plan — the same command giving different answers on different databases,
+    // or on the same database after an ANALYZE. `ord` pins the precedence: the
+    // current key beats the alias, always.
     const char* const GRUPO_ID_POR_CHAVE_OU_APELIDO =
         "SELECT id FROM ("
         "  SELECT 0 AS ord, id    AS id FROM grupo         WHERE chave=?1 "
@@ -337,14 +340,15 @@ namespace comum
         "  SELECT 1 AS ord, grupo AS id FROM grupo_apelido WHERE de=?1"
         ") t ORDER BY ord LIMIT 1;";
 
-    // Agora que o id vem resolvido, apagar é por id: sem subconsulta, sem
-    // dialeto, e o número de linhas apagadas quer dizer exatamente o que
-    // parece querer dizer nos dois bancos.
+    // Now that the id arrives already resolved, deleting is by id: no
+    // subquery, no dialect, and the number of deleted rows means exactly what
+    // it looks like it means on both databases.
     const char* const VINCULO_APAGAR =
         "DELETE FROM jogador_grupo WHERE jogador=?1 AND grupo=?2;";
 
-    // A ação vira parâmetro (era literal 'conceder'/'revogar' em dois comandos
-    // quase iguais). Um comando só, um lugar para conferir.
+    // The action becomes a parameter (it used to be a literal
+    // 'conceder'/'revogar' in two nearly identical commands). One command, one
+    // place to check.
     const char* const DIARIO_INSERIR =
         "INSERT INTO diario(em,quem,acao,alvo,detalhe) VALUES(?1,?2,?3,?4,?5);";
 
@@ -353,17 +357,17 @@ namespace comum
 }
 
 // ============================================================================
-//  3 · COMANDOS QUE DIFEREM — escritos duas vezes, um embaixo do outro
+//  3 · COMMANDS THAT DIFFER — written twice, one under the other
 //
-//  Todos são upsert. O SQLite fala ON CONFLICT(...) DO UPDATE/DO NOTHING
-//  (sintaxe do PostgreSQL, que ele adotou); o MySQL nunca teve ON CONFLICT e
-//  fala ON DUPLICATE KEY UPDATE. Não há tradução automática entre as duas:
-//  a do SQLite nomeia a coluna do conflito, a do MySQL vale para QUALQUER
-//  chave única da tabela.
+//  They're all upserts. SQLite speaks ON CONFLICT(...) DO UPDATE/DO NOTHING
+//  (PostgreSQL's syntax, which it adopted); MySQL never had ON CONFLICT and
+//  speaks ON DUPLICATE KEY UPDATE. There's no automatic translation between
+//  them: SQLite's names the conflicting column, MySQL's applies to ANY unique
+//  key on the table.
 //
-//  O `x=x` do lado MySQL é o "não faça nada" dele: um UPDATE que não muda
-//  nada. Escrever `INSERT IGNORE` no lugar seria mais curto e estaria errado —
-//  IGNORE também engole erro de verdade (chave estrangeira, truncamento).
+//  The `x=x` on the MySQL side is its "do nothing": an UPDATE that changes
+//  nothing. Writing `INSERT IGNORE` instead would be shorter and would be wrong
+//  — IGNORE also swallows real errors (foreign keys, truncation).
 // ============================================================================
 
 // meta ───────────────────────────────────────────────────────────────────────
@@ -374,10 +378,10 @@ const char* const META_GRAVAR_VERSAO_MYSQL =
     "INSERT INTO meta(chave,valor) VALUES('esquema_versao',?1) "
     "ON DUPLICATE KEY UPDATE chave=chave;";
 
-// o apelido que o renome deixa para trás ─────────────────────────────────────
-// Guarda a chave VELHA apontando para o grupo que tem essa chave AGORA (antes
-// da troca). É o que mantém certo o plugin de terceiro compilado perguntando
-// por "vip" depois de o grupo virar "premium".
+// the alias a rename leaves behind ──────────────────────────────────────────
+// It stores the OLD key pointing at the group that holds that key NOW (before
+// the swap). It's what keeps a compiled third-party plugin correct when it asks
+// for "vip" after the group became "premium".
 const char* const GRUPO_APELIDO_RENOME_SQLITE =
     "INSERT INTO grupo_apelido(de,grupo) SELECT ?1, id FROM grupo WHERE chave=?1 "
     "ON CONFLICT(de) DO NOTHING;";
@@ -399,8 +403,9 @@ const char* const JOGADOR_GARANTIR_SQLITE =
 const char* const JOGADOR_GARANTIR_MYSQL =
     "INSERT INTO jogador(id,visto_nome) VALUES(?1,'') "
     "ON DUPLICATE KEY UPDATE id=id;";
-// (o `visto_nome` explícito existe porque a coluna é TEXT NOT NULL e TEXT no
-//  MySQL não aceita DEFAULT; no SQLite ela tem DEFAULT '' e a diferença some.)
+// (the explicit `visto_nome` exists because the column is TEXT NOT NULL and
+//  TEXT on MySQL takes no DEFAULT; on SQLite it has DEFAULT '' and the
+//  difference disappears.)
 
 const char* const VINCULO_UPSERT_SQLITE =
     "INSERT INTO jogador_grupo(jogador,grupo,expira_em,concedido_em,concedido_por) "
@@ -421,7 +426,7 @@ const char* const VISTO_UPSERT_MYSQL =
     "ON DUPLICATE KEY UPDATE visto_nome=?2, visto_em=?3;";
 
 // ============================================================================
-//  4 · as duas tabelas montadas
+//  4 · the two assembled tables
 // ============================================================================
 const Sql SQL_SQLITE = {
     ESQUEMA_SQLITE,
@@ -484,13 +489,13 @@ const Sql SQL_MYSQL = {
 };
 
 // ============================================================================
-//  5 · o JSON, lido pelo json1 num SQLite EM MEMÓRIA
+//  5 · the JSON, read by json1 in an IN-MEMORY SQLite
 //
-//  O porquê está em Banco.h (LerConfigPermissao). Em uma linha: json_each é
-//  função de tabela do SQLite e não atravessa para o MySQL; escrever um parser
-//  de JSON à mão seria código novo lendo arquivo que o dono edita à mão. Então
-//  o mesmo json1 que já fazia o trabalho continua fazendo — num banco de
-//  memória que existe só para isso.
+//  The why is in Banco.h (LerConfigPermissao). In one line: json_each is a
+//  SQLite table function and doesn't carry over to MySQL; writing a JSON parser
+//  by hand would be new code reading a file the owner edits by hand. So the
+//  same json1 that already did the job keeps doing it — in an in-memory
+//  database that exists for nothing else.
 // ============================================================================
 class JsonEmMemoria
 {
@@ -509,10 +514,10 @@ public:
         return true;
     }
 
-    // O json1 é o mesmo parser que a Funcom já carrega no processo. `json_valid`
-    // ANTES de qualquer json_extract: extrair de JSON quebrado devolve NULL em
-    // silêncio, e configuração vazia com cara de configuração lida é pior que
-    // erro.
+    // json1 is the same parser Funcom already loads into the process.
+    // `json_valid` BEFORE any json_extract: extracting from broken JSON returns
+    // NULL silently, and an empty configuration wearing the face of a loaded
+    // one is worse than an error.
     bool Valido(const std::string& texto)
     {
         sqlite3_stmt* st = nullptr;
@@ -526,7 +531,7 @@ public:
         return ok != 0;
     }
 
-    // Roda `sql` com o texto do JSON ligado em ?1 e chama `fn` por linha.
+    // Runs `sql` with the JSON text bound to ?1 and calls `fn` per row.
     bool Percorrer(const char* sql, const std::string& texto,
                    void (*fn)(sqlite3_stmt*, void*), void* ctx, std::string& erro)
     {
@@ -554,7 +559,8 @@ private:
     sqlite3* m_db = nullptr;
 };
 
-// Lê o arquivo inteiro. Ausência NÃO é erro (o banco já pode estar pronto).
+// Reads the whole file. Absence is NOT an error (the database may already be
+// populated).
 bool LerArquivo(const char* caminho, std::string& texto, bool& existe, std::string& erro)
 {
     existe = false;
@@ -586,24 +592,24 @@ const char* Txt(sqlite3_stmt* st, int c)
     return t ? reinterpret_cast<const char*>(t) : nullptr;
 }
 
-// ── validação de chave, e o defeito que ela fecha ────────────────────────────
+// ── key validation, and the defect it closes ─────────────────────────────────
 //
-// GUARDA NOVA — e guarda nova sem calibração é guarda em que não se confia. Os
-// dois lados estão exercitados em testes/teste_banco.cpp: ela REPROVA chave
-// longa demais, vazia e com espaço na ponta, e APROVA as chaves do
-// permission.json que vem no pacote.
+// A NEW GUARD — and a new guard without calibration is a guard nobody trusts.
+// Both sides are exercised in testes/teste_banco.cpp: it FAILS a key that's too
+// long, empty, or has a trailing space, and PASSES the keys in the
+// permission.json that ships in the package.
 //
-// O QUE ELA FECHA:
-//  1. tamanho — o MySQL indexado tem VARCHAR(64)/VARCHAR(127) e roda em modo
-//     STRICT: uma chave de 200 caracteres seria ERRO e derrubaria a
-//     configuração inteira. No SQLite ela seria GRAVADA e depois descartada
-//     em silêncio na montagem do instantâneo ("apelido longo demais"). Dois
-//     comportamentos diferentes para o mesmo arquivo. Recusar na entrada,
-//     dizendo qual é a chave, iguala os dois e ainda conta ao dono o que
-//     está errado;
-//  2. espaço na ponta — utf8mb4_bin é PAD SPACE: no MySQL "vip " e "vip" são
-//     a MESMA chave; no SQLite são duas. Recusar aqui fecha a divergência na
-//     origem, que é o único lugar onde dá para fechar.
+// WHAT IT CLOSES:
+//  1. length — the indexed MySQL columns are VARCHAR(64)/VARCHAR(127) and it
+//     runs in STRICT mode: a 200-character key would be an ERROR and would take
+//     down the whole configuration. On SQLite it would be WRITTEN and then
+//     silently discarded while building the snapshot ("apelido longo
+//     demais"). Two different behaviours for the same file. Refusing at the
+//     door, naming the key, makes both the same and tells the owner what's
+//     wrong;
+//  2. a trailing space — utf8mb4_bin is PAD SPACE: on MySQL "vip " and "vip"
+//     are the SAME key; on SQLite they're two. Refusing here closes the
+//     divergence at its source, which is the only place it can be closed.
 bool ValidarChave(const char* valor, int teto, const char* oQueE,
                   const char* onde, std::string& erro)
 {
@@ -637,44 +643,46 @@ bool ValidarChave(const char* valor, int teto, const char* oQueE,
 // ============================================================================
 //  ValidarValorDeConexao — MysqlHost / MysqlUser / MysqlDB
 //
-//  INVARIANTE  INV-CONFIG-002
-//  Nome:        espaço na ponta de host, usuário e banco é recusado NA ENTRADA
-//  Descrição:   MysqlHost, MysqlUser e MysqlDB não podem começar nem terminar
-//               com espaço ou tab.
-//  Dano se quebrado: o dono não consegue consertar o que não consegue VER.
-//  Camadas:     esta função — e só ela pode ser, porque é o último ponto em que
-//               o texto do arquivo ainda existe do jeito que ele digitou.
+//  INVARIANT   INV-CONFIG-002
+//  Name:        a leading or trailing space in host, user and database is
+//               refused AT THE DOOR
+//  Description: MysqlHost, MysqlUser and MysqlDB may not begin or end with a
+//               space or a tab.
+//  Damage if broken: the owner can't fix what they can't SEE.
+//  Layers:      this function — and only it can be, because it's the last point
+//               where the file's text still exists the way they typed it.
 //
-//  O DEFEITO REAL QUE MOTIVOU, medido em 18/08/2026 rodando sob Wine contra o
-//  MySQL 8.4.11 de teste (testes/simulador_dono.cpp, um config por vez):
+//  THE REAL DEFECT THAT MOTIVATED IT, measured on 2026-08-18 running under Wine
+//  against the test MySQL 8.4.11 (testes/simulador_dono.cpp, one config at a
+//  time):
 //
 //    MysqlHost "127.0.0.1 "        -> "nao consegui resolver o endereco
 //                                      '127.0.0.1 '"
-//    MysqlUser "conan "            -> erro 1045, "Access denied for user
+//    MysqlUser "conan "            -> error 1045, "Access denied for user
 //                                      'conan '@..."
-//    MysqlDB   "conan_permission " -> erro 1102 CRU, "Incorrect database name
-//                                      'conan_permission '" — sem tradução
-//                                      nenhuma e sem dizer o que fazer.
+//    MysqlDB   "conan_permission " -> RAW error 1102, "Incorrect database name
+//                                      'conan_permission '" — no translation at
+//                                      all and no hint of what to do.
 //
-//  As três mensagens são VERDADEIRAS e INÚTEIS: o espaço não aparece na tela.
-//  O dono lê '127.0.0.1 ', reconhece o endereço que ele mesmo digitou, confere
-//  o arquivo, vê a mesma coisa — e conclui que o plugin está com defeito. Ele
-//  não tem como ver a diferença; nós temos.
+//  All three messages are TRUE and USELESS: the space doesn't show on screen.
+//  The owner reads '127.0.0.1 ', recognises the address they typed themselves,
+//  checks the file, sees the same thing — and concludes the plugin is broken.
+//  They have no way to see the difference; we do.
 //
-//  POR QUE RECUSAR E NÃO APARAR SOZINHO: aparar em silêncio faria o plugin
-//  conectar como um usuário — ou num banco — DIFERENTE do que está escrito no
-//  arquivo. Este código já decidiu essa mesma questão uma vez, para chave de
-//  grupo (ValidarChave, logo acima), pelo mesmo motivo. Duas respostas
-//  diferentes para o mesmo problema no mesmo arquivo é o que confunde.
+//  WHY REFUSE INSTEAD OF TRIMMING: trimming silently would have the plugin
+//  connect as a DIFFERENT user — or to a DIFFERENT database — than what's
+//  written in the file. This code already settled that same question once, for
+//  group keys (ValidarChave, just above), for the same reason. Two different
+//  answers to the same problem in the same file is what confuses people.
 //
-//  E POR QUE A SENHA FICA DE FORA: senha com espaço na ponta é uma senha
-//  legítima. Recusar quebraria quem tem uma. A senha é dita na mensagem do
-//  erro 1045, que é onde ela aparece.
+//  AND WHY THE PASSWORD IS LEFT OUT: a password with a trailing space is a
+//  legitimate password. Refusing would break whoever has one. The password is
+//  named in error 1045's message, which is where it shows up.
 // ============================================================================
 bool ValidarValorDeConexao(const std::string& valor, const char* chave,
                            std::string& erro)
 {
-    if (valor.empty()) return true;      // ausente/vazio é tratado por quem chama
+    if (valor.empty()) return true;      // absent/empty is handled by the caller
 
     const char p = valor.front(), u = valor.back();
     const bool comeca = (p == ' ' || p == '\t');
@@ -685,16 +693,17 @@ bool ValidarValorDeConexao(const std::string& valor, const char* chave,
     while (!limpo.empty() && (limpo.front() == ' ' || limpo.front() == '\t')) limpo.erase(limpo.begin());
     while (!limpo.empty() && (limpo.back()  == ' ' || limpo.back()  == '\t')) limpo.pop_back();
 
-    // Os colchetes são o instrumento: eles dão uma borda ao valor, e é contra a
-    // borda que o vão do espaço aparece. Sem eles a mensagem seria tão invisível
-    // quanto as três que ela substitui.
+    // The brackets are the instrument: they give the value an edge, and it's
+    // against that edge that the gap of a space becomes visible. Without them
+    // the message would be as invisible as the three it replaces.
     //
-    // 600 e não 420: o texto fixo tem ~335 bytes e os dois %.80s podem somar
-    // 160, o que estouraria 420 e faria o snprintf cortar justamente o fim —
-    // que é onde está a instrução ("apague o espaço"). Mensagem truncada no
-    // conselho é a que sobra quando o nome do host é longo, e é exatamente o
-    // caso do dono que usa um endereço de provedor. Registrar() aceita 1024 e o
-    // prefixo custa 35, então 600 cabe com folga.
+    // 600 and not 420: the fixed text is ~335 bytes and the two %.80s can add
+    // up to 160, which would overflow 420 and make snprintf cut off exactly the
+    // end — which is where the instruction lives ("delete the space"). A
+    // message truncated at the advice is what you're left with when the host
+    // name is long, and that's exactly the owner using a provider's address.
+    // Registrar() takes 1024 and the prefix costs 35, so 600 fits with room to
+    // spare.
     char b[600];
     std::snprintf(b, sizeof(b),
         "\"%s\" %s com ESPACO. Espaco nao aparece na tela — por isso o valor "
@@ -708,7 +717,7 @@ bool ValidarValorDeConexao(const std::string& valor, const char* chave,
     erro = b;
     return false;
 }
-}   // namespace anônimo
+}   // anonymous namespace
 
 const Sql& SqlDoSqlite() { return SQL_SQLITE; }
 const Sql& SqlDoMysql()  { return SQL_MYSQL;  }
@@ -723,7 +732,7 @@ bool LerConfigBanco(const char* caminhoJson, const char* caminhoPadraoDb,
     saida = ConfigBanco();
     saida.caminhoSqlite = caminhoPadraoDb ? caminhoPadraoDb : "";
 
-    if (!caminhoJson || !*caminhoJson) return true;      // sem config: padrões
+    if (!caminhoJson || !*caminhoJson) return true;      // no config: defaults
 
     std::string texto;
     bool existe = false;
@@ -744,8 +753,8 @@ bool LerConfigBanco(const char* caminhoJson, const char* caminhoPadraoDb,
         std::string tipo, host, usuario, senha, banco, caminho;
         int64_t porta = 0, msConectar = 0, msOperar = 0;
         bool temPorta = false;
-        // O que o dono ESCREVEU na MysqlPort, em texto. Existe só para a
-        // mensagem de erro — ver INV-CONFIG-001 abaixo, na recusa da porta.
+        // What the owner WROTE in MysqlPort, as text. It exists only for the
+        // error message — see INV-CONFIG-001 below, at the port's refusal.
         std::string portaComoEscrita;
     } L;
 
@@ -767,9 +776,9 @@ bool LerConfigBanco(const char* caminhoJson, const char* caminhoPadraoDb,
         if ((t = Txt(st, 4))) l->banco   = t;
         if (sqlite3_column_type(st, 5) != SQLITE_NULL)
         {
-            // O int64 vem PRIMEIRO, como sempre veio: é ele que decide, e a
-            // ordem preservada é a que os testes já exercitaram. O texto é
-            // colhido depois e só alimenta a mensagem de erro.
+            // The int64 comes FIRST, as it always did: it's what decides, and
+            // the preserved order is the one the tests already exercised. The
+            // text is collected afterwards and only feeds the error message.
             l->porta = sqlite3_column_int64(st, 5); l->temPorta = true;
             if ((t = Txt(st, 5))) l->portaComoEscrita = t;
         }
@@ -778,20 +787,22 @@ bool LerConfigBanco(const char* caminhoJson, const char* caminhoPadraoDb,
         if (sqlite3_column_type(st, 8) != SQLITE_NULL) l->msOperar   = sqlite3_column_int64(st, 8);
     }, &L, erro)) return false;
 
-    // ── chave escrita na caixa errada ───────────────────────────────────────
+    // ── a key written in the wrong case ─────────────────────────────────────
     //
-    // INV-CONFIG-002. `json_extract` casa a chave EXATAMENTE: "$.Database" não
-    // encontra "database" nem "DATABASE". Quem escrevesse a chave na caixa
-    // errada tinha o bloco inteiro ignorado, caía no sqlite calado e só
-    // descobria semanas depois — procurando o dado no MySQL e não achando.
+    // INV-CONFIG-002. `json_extract` matches the key EXACTLY: "$.Database"
+    // finds neither "database" nor "DATABASE". Anyone writing the key in the
+    // wrong case had the whole block ignored, fell through to sqlite quietly,
+    // and only found out weeks later — looking for the data in MySQL and not
+    // finding it.
     //
-    // É o MESMO dano que a recusa de valor logo abaixo já fecha ("mysqll"), por
-    // um caminho diferente. Fechar um e deixar o outro aberto é a pior das
-    // combinações: dá a impressão de que a configuração é conferida.
+    // It's the SAME damage the value refusal just below already closes
+    // ("mysqll"), by a different route. Closing one and leaving the other open
+    // is the worst of both: it gives the impression that the configuration is
+    // checked.
     //
-    // Aqui só se RECUSA — nunca se adivinha. Aceitar "database" calado criaria
-    // uma segunda grafia válida que não está em documento nenhum, e o próximo
-    // dono de servidor copiaria a grafia errada de um fórum.
+    // Here we only REFUSE — never guess. Accepting "database" quietly would
+    // create a second valid spelling that appears in no document, and the next
+    // server owner would copy the wrong spelling off a forum.
     {
         static const char* const ESPERADAS[] = {
             "Database", "MysqlHost", "MysqlUser", "MysqlPass", "MysqlDB",
@@ -822,9 +833,10 @@ bool LerConfigBanco(const char* caminhoJson, const char* caminhoPadraoDb,
             {
                 std::string emin = e;
                 for (char& c : emin) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                // Só reclama de quem ERROU a caixa. Chave idêntica passa direto,
-                // e chave que não parece nenhuma das nossas é ignorada de
-                // propósito: o dono pode ter anotações no arquivo dele.
+                // It only complains about a key whose CASE is wrong. An
+                // identical key passes straight through, and a key that looks
+                // like none of ours is ignored on purpose: the owner may keep
+                // notes in their own file.
                 if (kmin == emin && k != e)
                 {
                     char b[320];
@@ -841,12 +853,13 @@ bool LerConfigBanco(const char* caminhoJson, const char* caminhoPadraoDb,
         }
     }
 
-    // ── qual banco ──────────────────────────────────────────────────────────
+    // ── which database ──────────────────────────────────────────────────────
     //
-    // Ausente = sqlite, que é o padrão e o que o plugin sempre fez. Valor
-    // desconhecido = RECUSA, e isto é deliberado: quem escreve "mysqll" e cai
-    // no sqlite em silêncio grava os VIPs num arquivo local que ninguém olha,
-    // e só descobre semanas depois, procurando o dado no MySQL.
+    // Absent = sqlite, which is the default and what the plugin always did. An
+    // unknown value = REFUSAL, and that's deliberate: whoever writes "mysqll"
+    // and falls through to sqlite quietly writes the VIPs into a local file
+    // nobody looks at, and only finds out weeks later, looking for the data in
+    // MySQL.
     {
         std::string t = L.tipo;
         for (char& c : t) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -872,20 +885,21 @@ bool LerConfigBanco(const char* caminhoJson, const char* caminhoPadraoDb,
     if (!L.caminho.empty()) saida.caminhoSqlite = L.caminho;
     if (!L.host.empty())    saida.host    = L.host;
     if (!L.usuario.empty()) saida.usuario = L.usuario;
-    saida.senha = L.senha;                       // senha vazia é escolha válida
+    saida.senha = L.senha;                       // an empty password is valid
 
-    // ── DEFEITO ACHADO PELO TESTE, e não por revisão de mesa ────────────────
+    // ── A DEFECT FOUND BY THE TEST, not by desk review ──────────────────────
     //
-    // A primeira versão deixava `banco` cair no padrão "conan_permission"
-    // quando o config não trazia MysqlDB. O teste que exigia RECUSA reprovou —
-    // e estava certo. Dois estragos:
-    //   1. o dono que esqueceu a chave recebia um erro do MySQL sobre um banco
-    //      que ele nunca escreveu em lugar nenhum ("Unknown database
-    //      'conan_permission'"), e ia procurar de onde saiu esse nome;
-    //   2. o dono que POR ACASO tem um banco chamado conan_permission (é o
-    //      nome que a documentação usa de exemplo) escreveria os VIPs nele
-    //      sem erro nenhum, achando que estava usando outro.
-    // Fica sem padrão de propósito: "onde gravar" não é coisa para adivinhar.
+    // The first version let `banco` fall back to the default "conan_permission"
+    // when the config carried no MysqlDB. The test demanding a REFUSAL failed
+    // it — and the test was right. Two kinds of damage:
+    //   1. the owner who forgot the key got a MySQL error about a database they
+    //      never wrote anywhere ("Unknown database 'conan_permission'"), and
+    //      would go looking for where that name came from;
+    //   2. the owner who BY CHANCE has a database called conan_permission (it's
+    //      the name the documentation uses as an example) would write the VIPs
+    //      into it with no error at all, believing they were using another.
+    // It has no default on purpose: "where to write" is not something to
+    // guess.
     if (L.banco.empty())
     {
         if (saida.tipo == ConfigBanco::MYSQL)
@@ -896,34 +910,35 @@ bool LerConfigBanco(const char* caminhoJson, const char* caminhoPadraoDb,
                    "voce nao pretendia usar, e sem erro nenhum.";
             return false;
         }
-        saida.banco.clear();          // no sqlite este campo não é usado
+        saida.banco.clear();          // on sqlite this field isn't used
     }
     else saida.banco = L.banco;
 
-    // ── INV-CONFIG-003: sem MysqlUser, NÃO se cai em "root" ──────────────────
+    // ── INV-CONFIG-003: with no MysqlUser, we do NOT fall back to "root" ─────
     //
-    //  DEFEITO REAL, medido em 18/08/2026 (testes/simulador_dono.cpp). Com
-    //  "Database": "mysql" e a chave MysqlUser ausente ou vazia, o padrão de
-    //  ConfigBanco — usuario = "root" — passava a valer, e o log dizia:
+    //  A REAL DEFECT, measured on 2026-08-18 (testes/simulador_dono.cpp). With
+    //  "Database": "mysql" and the MysqlUser key absent or empty,
+    //  ConfigBanco's default — usuario = "root" — came into force, and the log
+    //  said:
     //        o MySQL recusou o login do usuario 'root'
-    //  O dono nunca escreveu "root" em lugar nenhum. Três estragos:
+    //  The owner never wrote "root" anywhere. Three kinds of damage:
     //
-    //   1. é um FALLBACK QUE AMPLIA PERMISSÃO: na falta de instrução, o plugin
-    //      escolhia sozinho a conta mais poderosa do banco. A §11 da
-    //      ENGENHARIA-DE-ALTA-GARANTIA proíbe isso por nome;
-    //   2. o comentário do próprio permission.json manda o contrário — "NAO use
-    //      o root: crie um usuario so para isto". Arquivo e código diziam coisas
-    //      opostas sobre a mesma chave, e o código vencia calado;
-    //   3. quando o root do dono POR ACASO aceita a senha que ele colou (o caso
-    //      comum num MySQL local recém-instalado), não há erro nenhum: o plugin
-    //      entra como root e cria as tabelas como root, em silêncio. É o mesmo
-    //      estrago que o MysqlDB sem padrão evita logo acima, e pela mesma
-    //      razão: o que não foi dito não se adivinha.
+    //   1. it's a FALLBACK THAT WIDENS PERMISSION: absent an instruction, the
+    //      plugin picked the database's most powerful account on its own.
+    //      §11 of ENGENHARIA-DE-ALTA-GARANTIA forbids that by name;
+    //   2. permission.json's own comment says the opposite — "NAO use o root:
+    //      crie um usuario so para isto". File and code said opposite things
+    //      about the same key, and the code won quietly;
+    //   3. when the owner's root BY CHANCE accepts the password they pasted
+    //      (the common case on a freshly installed local MySQL), there's no
+    //      error at all: the plugin logs in as root and creates the tables as
+    //      root, silently. It's the same damage the defaultless MysqlDB avoids
+    //      just above, and for the same reason: what wasn't said isn't guessed.
     //
-    //  VEM DEPOIS DO MysqlDB de propósito: quando as duas faltam, o dono ouve
-    //  primeiro a mesma queixa que ouvia antes desta guarda existir. Mudar a
-    //  ordem só para pôr a novidade na frente trocaria uma mensagem já decidida
-    //  (e testada em 9b) por nada.
+    //  IT COMES AFTER MysqlDB on purpose: when both are missing, the owner
+    //  hears first the same complaint they heard before this guard existed.
+    //  Changing the order just to put the new thing in front would trade an
+    //  already-decided message (tested in 9b) for nothing.
     if (saida.tipo == ConfigBanco::MYSQL && L.usuario.empty())
     {
         erro = "\"Database\": \"mysql\" sem \"MysqlUser\". Diga com qual usuario "
@@ -934,13 +949,13 @@ bool LerConfigBanco(const char* caminhoJson, const char* caminhoPadraoDb,
         return false;
     }
 
-    // ── INV-CONFIG-002: espaço na ponta, recusado aqui e não lá adiante ──────
+    // ── INV-CONFIG-002: a trailing space, refused here and not further on ────
     //
-    // SÓ no caminho MySQL, e isso é deliberado: no sqlite estas três chaves não
-    // são usadas para nada, e recusar o arranque de quem roda sqlite por causa
-    // de um espaço num campo que ninguém lê seria transformar um detalhe inerte
-    // em servidor parado. O arquivo de exemplo já vem com as chaves presentes,
-    // então esse caso não é hipotético.
+    // ONLY on the MySQL path, and that's deliberate: on sqlite these three keys
+    // are used for nothing, and refusing to start for somebody running sqlite
+    // because of a space in a field nobody reads would turn an inert detail
+    // into a stopped server. The example file already ships with the keys
+    // present, so that case isn't hypothetical.
     if (saida.tipo == ConfigBanco::MYSQL)
     {
         if (!ValidarValorDeConexao(L.host,    "MysqlHost", erro)) return false;
@@ -953,21 +968,22 @@ bool LerConfigBanco(const char* caminhoJson, const char* caminhoPadraoDb,
         if (L.porta < 1 || L.porta > 65535)
         {
             // ── INV-CONFIG-001 ──────────────────────────────────────────────
-            //  A mensagem de recusa mostra o que o dono ESCREVEU, não o que o
-            //  parser entendeu.
+            //  The refusal message shows what the owner WROTE, not what the
+            //  parser understood.
             //
-            //  DEFEITO REAL, medido em 18/08/2026: com "MysqlPort": "a porta
-            //  padrao" no arquivo, esta linha dizia
+            //  A REAL DEFECT, measured on 2026-08-18: with
+            //  "MysqlPort": "a porta padrao" in the file, this line said
             //        "MysqlPort": 0 nao e uma porta
-            //  O `0` não existe em lugar nenhum do arquivo dele. O dono procura
-            //  um zero que ele nunca digitou, não acha, e a mensagem — que
-            //  estava tecnicamente certa — não o leva a lugar nenhum.
+            //  That `0` exists nowhere in their file. The owner goes looking
+            //  for a zero they never typed, doesn't find it, and the message —
+            //  technically correct — takes them nowhere.
             //
-            //  O json_extract devolve o texto quando o valor é texto; é ele que
-            //  entra aqui. Note que "33061" ENTRE ASPAS continua funcionando e
-            //  não chega nesta recusa: aspas em volta de um número é o erro mais
-            //  comum de quem edita JSON pela primeira vez, e ele é inofensivo —
-            //  o valor lido é o mesmo. Não se recusa o que não faz mal.
+            //  json_extract returns the text when the value is text; that's
+            //  what comes in here. Note that "33061" IN QUOTES still works and
+            //  never reaches this refusal: quotes around a number are the most
+            //  common mistake of somebody editing JSON for the first time, and
+            //  it's harmless — the value read is the same. We don't refuse what
+            //  does no harm.
             char b[400];
             const bool ehTexto = !L.portaComoEscrita.empty() &&
                                  L.portaComoEscrita != std::to_string(L.porta);
@@ -989,8 +1005,8 @@ bool LerConfigBanco(const char* caminhoJson, const char* caminhoPadraoDb,
         saida.porta = static_cast<uint16_t>(L.porta);
     }
 
-    // Prazo <= 0 cai no padrão. "Sem limite" não é opção que este código ofereça
-    // — ver INV-MYSQL-002 em MySqlCliente.h.
+    // A timeout <= 0 falls back to the default. "No limit" isn't an option
+    // this code offers — see INV-MYSQL-002 in MySqlCliente.h.
     if (L.msConectar > 0) saida.msConectar = static_cast<int>(L.msConectar);
     if (L.msOperar   > 0) saida.msOperar   = static_cast<int>(L.msOperar);
 
@@ -1004,7 +1020,7 @@ bool LerConfigBanco(const char* caminhoJson, const char* caminhoPadraoDb,
 }
 
 // ============================================================================
-//  LerConfigPermissao — grupos, herança, permissões e apelidos
+//  LerConfigPermissao — groups, inheritance, permissions and aliases
 // ============================================================================
 bool LerConfigPermissao(const char* caminhoJson, ConfigPermissao& saida,
                         bool& existe, std::string& erro)
@@ -1022,11 +1038,12 @@ bool LerConfigPermissao(const char* caminhoJson, ConfigPermissao& saida,
     if (!j.Abrir(erro)) return false;
     if (!j.Valido(texto)) { erro = "permission.json nao e JSON valido"; return false; }
 
-    // ── grupos ──────────────────────────────────────────────────────────────
+    // ── groups ──────────────────────────────────────────────────────────────
     //
-    // O CASE de `padrao` é o mesmo que já rodava: json_extract de um `true`
-    // devolve o inteiro 1, e alguém que escreveu "true" entre aspas também
-    // acerta. Copiado sem mudar uma vírgula de propósito.
+    // The CASE for `padrao` is the same one that was already running:
+    // json_extract of a `true` returns the integer 1, and somebody who wrote
+    // "true" in quotes gets it right too. Copied without changing a comma, on
+    // purpose.
     struct CtxG { std::vector<ConfigGrupo>* g; } cg{ &saida.grupos };
     const char* qG =
         "SELECT json_extract(v.value,'$.chave'), "
@@ -1056,7 +1073,7 @@ bool LerConfigPermissao(const char* caminhoJson, ConfigPermissao& saida,
         return nullptr;
     };
 
-    // ── herança ─────────────────────────────────────────────────────────────
+    // ── inheritance ─────────────────────────────────────────────────────────
     struct CtxH { ConfigPermissao* c; } ch{ &saida };
     const char* qH =
         "SELECT json_extract(v.value,'$.chave'), h.value "
@@ -1070,11 +1087,12 @@ bool LerConfigPermissao(const char* caminhoJson, ConfigPermissao& saida,
             if (g.chave == filho) { g.herda.push_back(pai); return; }
     }, &ch, erro)) return false;
 
-    // ── permissões ──────────────────────────────────────────────────────────
+    // ── permissions ─────────────────────────────────────────────────────────
     //
-    // "-vip.teleporte" é negação explícita: o '-' sai do nó e vira nega=1.
-    // Mesma regra de antes, agora em C++ em vez de num CASE do SQL — porque
-    // o SQL agora tem de rodar nos dois bancos e este pedaço não precisa.
+    // "-vip.teleporte" is an explicit denial: the '-' comes off the node and
+    // becomes nega=1. Same rule as before, now in C++ instead of a SQL CASE —
+    // because the SQL now has to run on both databases and this bit doesn't
+    // have to.
     const char* qP =
         "SELECT json_extract(v.value,'$.chave'), p.value "
         "FROM json_each(?1,'$.grupos') v JOIN json_each(v.value,'$.permissoes') p "
@@ -1091,18 +1109,18 @@ bool LerConfigPermissao(const char* caminhoJson, ConfigPermissao& saida,
             if (g.chave == chave) { g.permissoes.emplace_back(limpo, nega); return; }
     }, &ch, erro)) return false;
 
-    // ── apelidos de nó de permissão ─────────────────────────────────────────
+    // ── permission-node aliases ─────────────────────────────────────────────
     //
-    // DEFEITO REAL ACHADO LENDO O CÓDIGO ANTIGO: a consulta original era
+    // A REAL DEFECT FOUND BY READING THE OLD CODE: the original query was
     // `SELECT a.key, a.value FROM json_each(?1,'$.apelidos_de_permissao') a` —
-    // sem filtro nenhum. O permission.json que vai no pacote tem, dentro desse
-    // objeto, a chave de documentação "_leia_isto". Ou seja: toda instalação
-    // ganhava um apelido chamado `_leia_isto` apontando para a frase de ajuda.
-    // Não fazia mal (ninguém pergunta permissão para "_leia_isto"), mas era uma
-    // linha de lixo no banco de todo mundo, e o arquivo usa `_` como prefixo de
-    // documentação em TODOS os outros lugares (_leia_isto, _identidade,
-    // _fronteira, _privacidade). Aqui o prefixo passa a valer também dentro
-    // deste objeto.
+    // with no filter at all. The permission.json that ships in the package has,
+    // inside that object, the documentation key "_leia_isto". Which means every
+    // installation gained an alias called `_leia_isto` pointing at the help
+    // sentence. It did no harm (nobody asks a permission for "_leia_isto"), but
+    // it was a junk row in everybody's database, and the file uses `_` as its
+    // documentation prefix EVERYWHERE else (_leia_isto, _identidade,
+    // _fronteira, _privacidade). Here the prefix starts applying inside this
+    // object too.
     struct CtxA { ConfigPermissao* c; } ca{ &saida };
     const char* qA =
         "SELECT a.key, a.value FROM json_each(?1,'$.apelidos_de_permissao') a "
@@ -1115,7 +1133,7 @@ bool LerConfigPermissao(const char* caminhoJson, ConfigPermissao& saida,
         static_cast<CtxA*>(p)->c->apelidosDeNo.emplace_back(de, para);
     }, &ca, erro)) return false;
 
-    // ── validação: o que não passa aqui não chega ao banco ──────────────────
+    // ── validation: what doesn't pass here never reaches the database ───────
     for (const ConfigGrupo& g : saida.grupos)
     {
         if (!ValidarChave(g.chave.c_str(), MAX_GRUPO, "a chave de grupo",
@@ -1138,10 +1156,10 @@ bool LerConfigPermissao(const char* caminhoJson, ConfigPermissao& saida,
                           "\"apelidos_de_permissao\"", erro)) return false;
     }
 
-    // Chave de grupo repetida: o SQL antigo resolvia por ON CONFLICT (o último
-    // ganhava, calado). Recusar é melhor — um permission.json com dois grupos
-    // "vip" é erro de edição, e o dono precisa saber qual dos dois o servidor
-    // ia usar.
+    // A repeated group key: the old SQL settled it with ON CONFLICT (the last
+    // one won, quietly). Refusing is better — a permission.json with two "vip"
+    // groups is an editing mistake, and the owner needs to know which of the
+    // two the server was going to use.
     for (size_t i = 0; i < saida.grupos.size(); ++i)
         for (size_t k = i + 1; k < saida.grupos.size(); ++k)
             if (saida.grupos[i].chave == saida.grupos[k].chave)
