@@ -11,19 +11,19 @@
 </p>
 
 
-# Conan-Api SDK — write native server-side plugins for Conan Exiles Enhanced
+# Conan-Api SDK, write native server-side plugins for Conan Exiles Enhanced
 
 **This is the developer SDK for [Conan-Api](https://github.com/andrew-mauricio/Conan-Api),
 a server-side plugin framework for privately operated Conan Exiles Enhanced
 dedicated servers.** Plugins you build with it are ordinary Windows DLLs that run
-inside the dedicated server process — server-side only. Players connect with an
+inside the dedicated server process, server-side only. Players connect with an
 unmodified client and download nothing.
 
 If you have written plugins for **ArkApi** or **AsaApi**, the model will be
 familiar. See [Coming from ArkApi or AsaApi](#coming-from-arkapi-or-asaapi) for
 what is the same and what is different.
 
-You need **one header** and a C++ compiler. There is no library to link, no code
+You need **one header** and a C++ compiler. There's no library to link, no code
 of ours to compile alongside, and no project file to configure.
 
 ---
@@ -66,12 +66,12 @@ Your plugin                      a DLL in Plugins/<Name>/, with PluginInfo.json
 
 **The ABI table is the contract.** Your plugin receives a pointer to a C struct
 of function pointers in its entry point, and every interaction with the engine
-goes through it. Nothing of ours is linked into your binary. That is what makes
-the compiler irrelevant, and it is also why a runtime built for a newer game
+goes through it. Nothing of ours is linked into your binary. That's what makes
+the compiler irrelevant, and it's also why a runtime built for a newer game
 build can serve a plugin compiled months earlier: the table's shape is versioned
 and additive.
 
-**The scheduler exists because the engine is not thread-safe.** Work you hand to
+**The scheduler exists because the engine isn't thread-safe.** Work you hand to
 `AgendarNaThreadDoJogo` runs on the elected game thread, not on whichever thread
 your callback happened to be on. Calling engine functions from another thread is
 the fastest way to corrupt a running server.
@@ -81,11 +81,11 @@ the fastest way to corrupt a running server.
 ## Runtime reflection: how calling by name works
 
 Unreal Engine keeps reflection metadata about its own types inside the running
-process — class names, function names, parameter names and types, property
+process, class names, function names, parameter names and types, property
 offsets. The API reads that metadata and uses it to locate and invoke game
 functions.
 
-That is what lets a plugin write this:
+That's what lets a plugin write this:
 
 ```cpp
 character->SpawnTemplateItem(10001, ConanApi::Nome("myshop"), 100, 1.0f, 0.0f, true);
@@ -107,7 +107,7 @@ path the engine itself uses.
 | of those, replicated | **1,222** |
 
 These numbers describe **one specific build** and are reproducible with the
-tooling in this repository. They are not a promise about future builds: when
+tooling in this repository. They aren't a promise about future builds: when
 Funcom ships a new one, the catalogue must be re-collected and the numbers will
 differ.
 
@@ -127,7 +127,7 @@ is the single most consequential difference for anyone porting a plugin.
 The authoritative source is the DataTable at `/Game/Items/ItemTable`. Each row's
 **Row Name is the Template ID**, and that is what identifies an item.
 
-The row's `ItemClass` field points at a blueprint, but **it is not unique**:
+The row's `ItemClass` field points at a blueprint, but **it isn't unique**:
 
 | item | Template ID | ItemClass |
 |---|---|---|
@@ -143,7 +143,7 @@ the delivery succeeds.
 The `ExtratorItemTable` plugin in this repository reads that DataTable directly
 from the running server, through the engine's own
 `GetDataTableRowNames` / `GetDataTableColumnAsString` — no struct layout is
-assumed, so it does not break when row layout changes between builds.
+assumed, so it doesn't break when row layout changes between builds.
 
 On the tested build it extracts the complete ItemTable exposed by that build:
 **9,121 rows × 120 columns**.
@@ -159,7 +159,7 @@ Validated build: **`24784646`** (Conan Exiles Enhanced, UE 5.6.1).
 
 For plugin authors this matters in one specific case. A plugin that resolves
 everything by name survives a game update, because names are stable where
-addresses are not. A plugin that **hardcodes raw offsets** does not — and the
+addresses aren't. A plugin that **hardcodes raw offsets** doesn't, and the
 failure is silent: it keeps running and reads the wrong memory.
 
 If your plugin depends on raw offsets, declare it in your `PluginInfo.json`. The
@@ -172,15 +172,15 @@ it run with wrong data. See
 ## Security and trust model
 
 A plugin built with this SDK is a native DLL running **inside the server
-process, with that process's privileges**. There is no sandbox between plugins,
-and there will not be one.
+process, with that process's privileges**. There's no sandbox between plugins,
+and there won't be one.
 
 For you as an author, two consequences:
 
 - **Your bugs crash the server.** A bad pointer in your plugin is a bad pointer
-  in the dedicated server. The API contains what it can — load failures, most
+  in the dedicated server. The API contains what it can, load failures, most
   hook errors, and errors in scheduled work (that plugin is quarantined, the
-  server continues) — but it cannot contain memory corruption.
+  server continues) — but it can't contain memory corruption.
 - **Publish your source.** Server administrators are installing a native binary
   that can read their players' identity data and any file the server can reach.
   Every example in this SDK ships with source, and that is the expectation for
@@ -188,12 +188,12 @@ For you as an author, two consequences:
 
 ---
 
-## What is open, and what is not
+## What is open, and what isn't
 
-This project draws a deliberate line, and it is worth stating plainly so nobody
+This project draws a deliberate line, and it's worth stating plainly so nobody
 has to guess.
 
-**Open source — the public plugin interface and reference implementations**
+**Open source, the public plugin interface and reference implementations**
 
 | | licence | where |
 |---|---|---|
@@ -203,34 +203,34 @@ has to guess.
 | the Permission plugin, with source | MIT | SDK `Exemplos/Permission/` |
 | a complete real plugin, with source and tests | MIT | [Conan-Shop](https://github.com/andrew-mauricio/Conan-Shop) |
 
-**Distributed as a binary — the runtime**
+**Distributed as a binary, the runtime**
 
 The Conan-Api runtime and loader (`winmm.dll` and the packaged runtime) ship
-compiled. Their source is not published, and the licence is proprietary: you may
+compiled. Their source isn't published, and the licence is proprietary: you may
 run them on as many servers as you like, including servers that charge players,
 but you may not resell, re-host or redistribute them.
 
-Documented in the open, even though the source is not: how the loader enters the
+Documented in the open, even though the source isn't: how the loader enters the
 process, what it does at startup and shutdown, the build check, the trust model,
-and the full list of functions it exposes to plugins — all in this README and in
+and the full list of functions it exposes to plugins, all in this README and in
 the public headers. Every release publishes the SHA-256 of its artifacts, so you
 can verify that the file you downloaded is the file that was published.
 
-> To be exact about what that does and does not give you: the SHA-256 lets you
-> confirm the download was not tampered with in transit or re-hosted. It does
+> To be exact about what that does and doesn't give you: the SHA-256 lets you
+> confirm the download wasn't tampered with in transit or re-hosted. It does
 > **not** let you reproduce the runtime binary from published source, because
-> that source is not published. Where a reproducible build *is* claimed in this
-> project, it is claimed for plugins whose source is public — Conan-Shop, for
+> that source isn't published. Where a reproducible build *is* claimed in this
+> project, it's claimed for plugins whose source is public — Conan-Shop, for
 > instance, where you can compile and compare the hash yourself.
 
-**Private — the engineering that produced the API**
+**Private, the engineering that produced the API**
 
 The tooling that discovers engine structures, resolves them without debug
 symbols, generates the typed SDK, and adapts the runtime to a new game build is
-maintained privately. That is the work that took the longest, and it is what
+maintained privately. That's the work that took the longest, and it's what
 distinguishes this project.
 
-None of it ships, none of it executes on your machine, and none of it is part of
+None of it ships, none of it executes on your machine, and none of it's part of
 any release.
 
 ---
@@ -253,10 +253,10 @@ cl /nologo /std:c++17 /O2 /EHsc /LD /MT ^
 ```
 
 **`/MT` really matters.** With `/MD`, your DLL depends on the Microsoft runtime
-being installed on the machine — and many servers run under Wine, in a container
+being installed on the machine, and many servers run under Wine, in a container
 where that runtime may not exist. The symptom is `LoadLibrary` failing with a
 generic code that explains nothing. With `/MT` the runtime goes inside your DLL
-and the problem does not exist.
+and the problem doesn't exist.
 
 To check it worked:
 
@@ -287,9 +287,9 @@ The `-static-*` for the same reason as `/MT`.
 | mingw-w64 (GCC 13+) | yes | **yes** — every build |
 | clang targeting Windows | yes | not directly |
 
-This is not a statement of intent. On every version we download the published
+This isn't a statement of intent. On every version we download the published
 package, build `ExemploOla` with MinGW **and** with MSVC, and bring both
-binaries up on the same server. If either one stops working, the release does not
+binaries up on the same server. If either one stops working, the release doesn't
 ship.
 
 ---
@@ -319,7 +319,7 @@ sed -i 's/ExemploOla/MyPlugin/g' compilar.sh
 ## From chat to the player: the path every plugin needs
 
 This is the jump missing from almost every API, and without it the 9,247 classes
-are useless: **someone typed something — who was it, and where are they?**
+are useless: **someone typed something, who was it, and where are they?**
 
 ```cpp
 extern "C" ConanAcao AoFalar(ConanChamada* c)
@@ -351,7 +351,7 @@ extern "C" ConanAcao AoFalar(ConanChamada* c)
 }
 ```
 
-`MembroPonteiro` is the helper that repeats in every plugin — it resolves the
+`MembroPonteiro` is the helper that repeats in every plugin, it resolves the
 offset **by name**, reads the pointer and refuses anything unreadable:
 
 ```cpp
@@ -375,15 +375,15 @@ into your code works today and reads the neighbouring field after the next patch
 
 ### And with no hook at all?
 
-When the starting point is not the player talking — a scheduled task, an admin
-command — the way in is to sweep:
+When the starting point isn't the player talking, a scheduled task, an admin
+command, the way in is to sweep:
 
 ```cpp
 void* pcs[64];
 int n = g_api->FindObjects("ConanPlayerController", pcs, 64, /*includeChildren=*/1);
 ```
 
-From there it is the same: `PlayerState` for the name, `Character` for the body.
+From there it's the same: `PlayerState` for the name, `Character` for the body.
 
 **Do not keep those pointers between calls.** The game's garbage collector
 destroys objects and reuses addresses; `Legivel` would still say yes, because the
@@ -405,9 +405,9 @@ Conan-Api/Plugins/MyPlugin/
    mydatabase.db        <- whatever you write is born here
 ```
 
-### What is required, and what is not
+### What is required, and what isn't
 
-**Only the DLL.** A plugin with nothing but that loads and works — this project's
+**Only the DLL.** A plugin with nothing but that loads and works, this project's
 `Cartografo` and `GravadorDeEventos` run exactly like that, and the log shows:
 
 ```
@@ -423,14 +423,14 @@ The other two files are your choices:
 | `config.json` | no | **your plugin**; the API never opens it |
 
 `config.json` has no format imposed by anyone. The API only tells you **where**
-it lives, through `CaminhoConfig("MyPlugin")`, and the rest is yours — it can be
+it lives, through `CaminhoConfig("MyPlugin")`, and the rest is yours, it can be
 JSON, it can have another name, it can not exist at all.
 
 **Without `PluginInfo.json` you lose four things**, worth knowing before you
 decide to skip it:
 
 - your plugin's name and version in the log (only the folder name shows up)
-- `MinApiVersion` — the loader cannot refuse your plugin on an old API
+- `MinApiVersion` — the loader can't refuse your plugin on an old API
 - `Dependencies` — nothing guarantees Permission comes up before you
 - `BuildDoJogo` / `UsaOffsetsCrus` — without them your plugin loads after a game
   update even when it should not
@@ -457,7 +457,7 @@ for v6 without using anything from v6 refuses to run on a server still on v5, fo
 no reason at all.
 
 **`Dependencies`** makes sure Permission comes up before you. Without it you
-would ask it before it exists and conclude it is not installed. (That happened
+would ask it before it exists and conclude it isn't installed. (That happened
 here, with one of our own plugins.)
 
 **Store everything through the API**, never by relative path:
@@ -482,7 +482,7 @@ starts reading the wrong memory in silence:
 
 When you declare it and the game build changes, **the loader refuses your
 plugin** and tells the server owner to ask you for a new version. Without the
-declaration it loads and reads the neighbouring field — no error, no log, no
+declaration it loads and reads the neighbouring field, no error, no log, no
 clue.
 
 **How to not need this:** use `api->OffsetDoMembro(obj, "FieldName")` instead of
@@ -494,7 +494,7 @@ your plugin crosses the update without you doing anything.
 ## Answering in the first second
 
 The server accepts players **before** the world finishes building. In that window
-reflection does not exist yet, so a plugin switched on only after it leaves
+reflection doesn't exist yet, so a plugin switched on only after it leaves
 whoever typed an early command with no answer.
 
 There is a second, optional entry point for that:
@@ -509,21 +509,21 @@ void ConanPluginRegistrar(const ConanApiTabela* api)   // BEFORE the world
 ```
 
 `HookProcessEvent` called here **goes into a queue** and returns a valid id right
-away. The API arms the hook the moment the world builds — before any plugin is
+away. The API arms the hook the moment the world builds, before any plugin is
 switched on.
 
-**What you cannot do here:** touch a game object. There is no world, and
+**What you can't do here:** touch a game object. There's no world, and
 `FindClass`/`FindObjects` return nothing. If you need the world, the place is
 `ConanPluginCarregar`.
 
-You do not have to export `Registrar`. Without it everything works as before — it
+You don't have to export `Registrar`. Without it everything works as before, it
 only shortens the window.
 
 ---
 
 ## Using Permission
 
-Nothing to link — it is `GetProcAddress` underneath, in a small header:
+Nothing to link, it's `GetProcAddress` underneath, in a small header:
 
 ```cpp
 #include "Conan/ConanPermission.h"
@@ -534,7 +534,7 @@ if (ConanPermIdDoController(controller, id, sizeof(id)) > 0)
         GiveKit(controller);
 ```
 
-If Permission is not installed, the functions return the `if_absent` value you
+If Permission isn't installed, the functions return the `if_absent` value you
 passed and your plugin keeps running.
 
 **Ask at the moment of use, not at load.** And pick `if_absent` by the cost of
@@ -543,24 +543,24 @@ it to everyone during a database outage cannot be undone).
 
 ---
 
-## What the API will not let you do, and why
+## What the API won't let you do, and why
 
 **Hook any address.** `HookFuncao` refuses about 32% of them, with the reason in
-`TextoRecusa`. That is not a failure: it is the API refusing to install a detour
+`TextoRecusa`. That isn't a failure: it's the API refusing to install a detour
 that would one day execute half an instruction, corrupting memory hours later,
 somewhere unrelated to the cause.
 
 **Pass the wrong size.** `ChamarFuncao` checks the size of each argument against
-the real parameter and refuses when they do not match. If you pass a `float`
+the real parameter and refuses when they don't match. If you pass a `float`
 where the game expects a `double`, it stops and says so. We measured: **293
 functions** in this build corrupt the stack down that path, and the symptom shows
 up far from the cause.
 
 **Build a game string yourself.** The game destroys the parameter block on return
 and calls **its own** allocator on whatever pointer is there. If that is your
-memory, the server goes down — tested, not theory.
+memory, the server goes down, tested, not theory.
 
-You do not need to do that: **write ordinary text and the API builds it**.
+You don't need to do that: **write ordinary text and the API builds it**.
 
 ```cpp
 g_api->MensagemParaTodos("The server restarts in 5 minutes.");
@@ -574,7 +574,7 @@ whoever allocates is whoever frees.
 
 ---
 
-## When it does not work: where to look
+## When it doesn't work: where to look
 
 Two files answer almost everything, in `Conan-Api/Logs/`:
 
@@ -583,12 +583,12 @@ Two files answer almost everything, in `Conan-Api/Logs/`:
 | `ConanLoader.log` | which plugins the loader **saw**, which it **refused** and why |
 | `ConanApi.log` | what plugins wrote with `Log()`, and the engine's warnings |
 
-**The DLL will not open.** Almost always architecture (built x86 instead of x64)
+**The DLL won't open.** Almost always architecture (built x86 instead of x64)
 or `/MD` instead of `/MT`. Windows error `193` means, in practice, 32-bit.
 
 **It opened, but nothing happens.** Check that the folder name and the DLL name
 match, and that you exported `ConanPluginCarregar`. On MSVC, without `extern "C"`
-the name comes out decorated and the loader cannot find it:
+the name comes out decorated and the loader can't find it:
 
 ```bat
 dumpbin /exports MyPlugin.dll | findstr ConanPlugin
@@ -598,13 +598,13 @@ You should see `ConanPluginCarregar`, not `?ConanPluginCarregar@@YAXPEBU...`.
 
 **`ConanSDK.h` calls do nothing.** `ConanApi::UsarTabela(api)` is missing.
 
-**The function returns `false` and you cannot tell whether it ran.** Use
+**The function returns `false` and you can't tell whether it ran.** Use
 `api->UltimaChamadaExecutou()`. The game filters calls on template objects and
 uninitialised actors, and in those cases the return comes from a zeroed block —
 without that signal, "the function said no" and "the function did not run" become
 the same `false`.
 
-**You wrote to a field and the client does not see it.** The field is replicated;
+**You wrote to a field and the client doesn't see it.** The field is replicated;
 there are 1,222 of the 36,210 in this build. Ask first with
 `api->EhReplicado(...)` and prefer calling the game's own function, which walks
 the path that already replicates.
@@ -625,14 +625,14 @@ Before publishing, a short checklist:
 - [ ] everything it writes goes through `CaminhoDados("YourPlugin", ...)`
 - [ ] it checks `api->tamanho` before using the table
 - [ ] `DllMain` does nothing
-- [ ] if it uses Permission, it asks at use time and degrades when it is missing
-- [ ] it ran on a real server — a test does not prove the real path
+- [ ] if it uses Permission, it asks at use time and degrades when it's missing
+- [ ] it ran on a real server, a test doesn't prove the real path
 
 ---
 
 ## To run a server
 
-That is another repository: **[Conan-Api](https://github.com/andrew-mauricio/Conan-Api)**. The loader, the
+That's another repository: **[Conan-Api](https://github.com/andrew-mauricio/Conan-Api)**. The loader, the
 ready-made package and the install guide live there.
 
 They are separate on purpose: someone running a server needs no compiler at all,
@@ -650,7 +650,7 @@ runtime.
 The **[Conan-Api runtime](https://github.com/andrew-mauricio/Conan-Api)** (the
 loader that gets into the server process) has its own, more restrictive licence:
 run it on as many servers as you like, including servers that charge players,
-but do not resell or re-host the API itself.
+but don't resell or re-host the API itself.
 
 Full text in [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
 
@@ -668,7 +668,7 @@ Full text in [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
 
 ## Legal notice and attribution
 
-**Conan-Api is an independent, community-developed project. It is not affiliated
+**Conan-Api is an independent, community-developed project. It isn't affiliated
 with, endorsed by, sponsored by, or supported by Funcom or Inflexion Games.**
 
 *Conan Exiles* and all related marks are the property of Funcom. Promotional
@@ -677,7 +677,7 @@ their respective owners; they are used for identification only.
 
 The reflected catalogue shipped here was produced by reading the publicly
 distributed dedicated server's own reflection data, for the purpose of
-interoperability — enabling administrators to extend servers they operate
+interoperability, enabling administrators to extend servers they operate
 themselves.
 
 <p align="center">
