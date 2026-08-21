@@ -703,6 +703,200 @@ would free twice. We prefer an untyped template to a signature that corrupts.
 
 ---
 
+## "It ran" is not "it worked"
+
+Read this before you trust any call you make. It cost us a working-looking
+plugin that lied to players with total confidence.
+
+`UltimaChamadaExecutou()` answers exactly one question, truthfully: **was the
+UFunction dispatched?** It cannot answer *did the body do any work?*, and
+nothing in the API can. Those are different questions, and a great many Conan
+functions answer the first with yes and the second with no:
+
+- the whole `ConanCheatManager` surface returns early for a player who is not an
+  admin — the call dispatches, and nothing happens;
+- a setter whose precondition fails dispatches and leaves the field alone.
+
+We shipped a command that called `ConanCheatManager::LearnAllFeats()`, saw the
+sentinel say yes, and told the player everything was unlocked. The knowledge
+window still showed padlocks and *not enough points*. The log of that run:
+
+```
+[engrams] first run: cheat manager=ConanCheatManager  admin=no
+[engrams] unlocked for <player> (feats + recipes)
+```
+
+Both statements were true about the calls and false about the world.
+
+**The rule: anything that matters is confirmed by reading the resulting state.**
+The game usually hands you the reader right next to the writer —
+`IsFeatPurchased` beside `ServerForceLearnFeat`, `LerBit` beside `EscreverBit`.
+Use it, count the confirmations, and report those numbers. A count of calls made
+is not a result.
+
+---
+
+## Granting knowledge: feats and recipes
+
+A worked example, because `ConanSDK.h` holds 9,247 classes and knowing that a
+thing exists is useless if you cannot find it.
+
+Knowledge in Conan is **two separate systems**, and unlocking one leaves the
+player stuck:
+
+| | what it is | where it lives |
+|---|---|---|
+| **Feats** | the knowledge tree, the part that costs points | `UProgressionSystem`, per character |
+| **Recipes** | the individual craftable entries | `UConanCharacter.UnlockAllRecipes`, a replicated flag |
+
+### The pieces, and their names in the SDK
+
+```cpp
+UConanCharacter::GetProgressionSystem()                    // the component
+UProgressionSystem::ServerForceLearnFeat(id, fromNPC,
+                                         suppressReports,
+                                         bUpdateJourneys)  // grant, forced
+UProgressionSystem::IsFeatPurchased(id) -> bool            // the proof
+UConanCharacter::UnlockAllRecipes()                        // BitRef
+UConanCharacter::OnRep_UnlockAllRecipes()                  // tell the game
+```
+
+**`ServerForceLearnFeat` versus `ServerPurchaseFeat`.** The purchase path is the
+shop, and it checks what you would expect — `CheckFeatCost`, `CheckFeatLevel`,
+`CheckFeatPrerequisite`. The forced path is how the game itself grants a feat
+when a teacher NPC or a quest gives one: **no points spent, no level
+requirement, no prerequisite walk**, and no admin anywhere in it. If you are
+writing "unlock everything", this is your function — and it is the game doing
+the work rather than you writing over its data.
+
+### Where the list of feats comes from — and where it does NOT
+
+**Not from the object array.** This is the trap, and it costs a whole test cycle
+to discover, so it is written down here instead.
+
+`UFeatItem` derives from `UGameItem`, so it is tempting to walk
+`FindObjects("FeatItem", ...)` and read `TemplateId` off each one. That code
+runs, finds objects, and reports a flawless result. It is still wrong: **the
+game only instantiates a `FeatItem` for a feat the character already knows.**
+Measured on a live server with a level-26 character:
+
+```
+feats: 98 walked · 0 learned now · 98 already had · 0 refused
+```
+
+98 objects, 98 already owned, nothing refused — a perfect score against the
+wrong population. The knowledge window still showed padlocks, because the
+hundreds of feats the player did *not* have were never objects to begin with.
+
+**The canonical source is the DataTable**, the same place the game reads. In a
+Conan `DataTable` the **row names are the template ids**, and the table holds
+every feat in the build whether or not anybody ever learned it:
+
+```cpp
+struct FNameCru { int32_t indice; int32_t numero; };
+
+// 1. find the table among the ~880 the world loads
+void* tables[8192];
+const int nt = g_api->FindObjects("DataTable", tables, 8192, /*subclasses=*/1);
+// ...pick the one whose NomeDoObjeto() is "FeatTable", skipping "Default__" (the CDO)
+
+// 2. its row names are the ids
+void* lib = g_api->GetDefaultObject("DataTableFunctionLibrary");
+std::vector<FNameCru> rows(65536); int n = 0;
+ConanApi::CallSaida(lib, "GetDataTableRowNames", table,
+                    ConanApi::ParaForaLista(rows.data(), 65536, n));
+
+char buf[64];
+for (int i = 0; i < n; ++i) {
+    g_api->NomeDeFName(rows[i].indice, buf, sizeof(buf));
+    const long id = std::strtol(buf, nullptr, 10);
+    ...
+}
+```
+
+The row struct is `FeatTableRow`, and it is in `ConanStructs.h` with its layout
+checked by `static_assert` — so you can read the columns too, the same way the
+item catalogue does with `GetDataTableColumnAsString`.
+
+**Print the near misses.** When the table is not found, log every DataTable
+whose name contains "feat" rather than just failing: a modded server can name it
+differently, and that list is the only thing that will tell you.
+
+If you want the cost, level and prerequisites — to build a knowledge *shop*
+rather than a giveaway — a live `UFeatItem` answers `GetFeatCost()`,
+`GetLevelRequirement()`, `GetPrerequisiteFeat()` and `GetRewardRecipe()`. Just
+remember which question each source answers: the object array tells you what a
+character **has**, the table tells you what **exists**.
+
+### The shape that works
+
+```cpp
+void* prog = ConanApi::Call<void*>(pawn, "GetProgressionSystem");
+
+for (int i = 0; i < n; ++i)
+{
+    int32_t id = 0;
+    const int32_t off = g_api->OffsetDoMembro(items[i], "TemplateId");
+    if (off < 0) continue;
+    g_api->LerMembro(items[i], uint32_t(off), &id, sizeof(id));
+    if (id <= 0) continue;                       // class default object, holes
+
+    if (ConanApi::Call<bool>(prog, "IsFeatPurchased", id)) { ++already; continue; }
+
+    ConanApi::Call<void>(prog, "ServerForceLearnFeat",
+                         id, false, /*suppressReports=*/true, false);
+
+    // The only line that decides anything.
+    ConanApi::Call<bool>(prog, "IsFeatPurchased", id) ? ++learned : ++refused;
+}
+```
+
+`suppressReports=true` matters: there are hundreds of feats, and each one would
+otherwise pop its own notification at the player.
+
+For the recipes half, set the flag, run the game's own reaction, then read the
+bit back:
+
+```cpp
+const int32_t off = g_api->OffsetDoMembro(pawn, "UnlockAllRecipes");
+g_api->EscreverBit(pawn, uint32_t(off), 1, 1);
+ConanApi::Call<void>(pawn, "OnRep_UnlockAllRecipes");
+const bool actuallySet = g_api->LerBit(pawn, uint32_t(off), 1) > 0;   // report THIS
+```
+
+`OnRep` is what runs the game's reaction to the change; on the server nobody
+calls it for you, and without it the server believes one thing while the
+player's screen shows another. Writing the **bit** rather than the byte costs
+nothing and survives a patch that packs the flag beside another one.
+
+### Not every feat can be granted, and that is correct
+
+The base `FeatTable` is **not** just the base game. It carries every DLC's feats
+too, tagged in `FeatTableRow.DLCPackage`, and the game refuses to grant one that
+belongs to a DLC the account does not own.
+
+This is worth knowing before you spend an afternoon debugging it. Two accounts,
+one server, identical code, the same 2346-row table:
+
+```
+account A    913 learned · 101 already had · 1332 refused
+account B    871 learned · 346 already had · 1129 refused
+```
+
+**Different refusals from the same table** is what tells you it is entitlement
+and not your bug — a defect in your loop would refuse the same rows for both.
+The game's knowledge window agrees: those padlocks read *DLC missing*, not *not
+enough points*.
+
+Read the `DLCPackage` column and group your refusals by it. "1332 refused" is a
+number nobody can act on; "1332 refused, all of them DLC" is an answer.
+
+`ConanCheatManager::SetBypassEntitlements` exists and would step over the check.
+**Don't.** DLC is content Funcom sells, and a plugin that gives it away is not a
+plugin any server owner should install by accident.
+
+---
+
 ## Talking to the player
 
 This has existed since table **v3**, and there are three distinct routes:

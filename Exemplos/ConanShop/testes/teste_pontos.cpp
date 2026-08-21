@@ -75,9 +75,9 @@ int main(int argc, char** argv)
              ("saldo=" + std::to_string(Shop::Saldo(J))).c_str());
 
     std::printf("\n== 4. A CORRIDA: 8 threads x 50 compras de 10, com saldo para 20 ==\n");
-    // Saldo exato para 20 compras de 10. As 400 tentativas disputam as mesmas
-    // 20 vagas; se a condicao nao estivesse dentro do UPDATE, mais de 20
-    // passariam e o saldo terminaria negativo.
+    // A balance that covers exactly 20 purchases of 10. The 400 attempts fight
+    // over those same 20 slots; if the condition weren't inside the UPDATE,
+    // more than 20 would go through and the balance would end up negative.
     const std::string C = "corrida";
     Shop::Creditar(C, 200, "preparo");
     Conferir(Shop::Saldo(C) == 200, "saldo inicial 200");

@@ -391,7 +391,7 @@ Gasto Debitar(const std::string& jogador, int64_t quanto, const char* motivo)
     if (g_mysql)
     {
         char sql[512], err[512];
-        // A condicao de saldo vai DENTRO do UPDATE. Ver o cabecalho do .h.
+        // The balance condition goes INSIDE the UPDATE. See the .h's header.
         if (!MontarSql(sql, sizeof(sql),
                 "UPDATE carteira SET pontos = pontos - %lld, gasto = gasto + %lld "
                 "WHERE jogador=%s AND pontos >= %lld;",
@@ -405,7 +405,7 @@ Gasto Debitar(const std::string& jogador, int64_t quanto, const char* motivo)
         if (!g_my->Executar(sql, err, sizeof(err)))
         { Registrar("[shop] debitar: %s", err); return Gasto::Erro; }
 
-        // "Quantas linhas mudaram" vem do BANCO. Zero significa que a condicao
+        // "How many rows changed" comes from the DATABASE. Zero means the
         // balance condition didn't pass, and there's nothing to undo, because
         // nothing changed.
         if (g_my->LinhasAfetadas() == 0) return Gasto::SemSaldo;

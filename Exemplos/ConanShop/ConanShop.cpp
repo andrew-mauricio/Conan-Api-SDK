@@ -386,7 +386,7 @@ static void ComandoComprar(const Jogador& j, const std::string& chave, int quant
         return;
     }
     if (quantas < 1) quantas = 1;
-    if (quantas > 100) quantas = 100;    // teto de sanidade
+    if (quantas > 100) quantas = 100;    // a sanity cap
 
     const int64_t custo = item->preco * quantas;
 
@@ -416,7 +416,7 @@ static void ComandoComprar(const Jogador& j, const std::string& chave, int quant
         return;
     }
 
-    // Debitado. A partir daqui, qualquer falha DEVOLVE.
+    // Debited. From here on, any failure REFUNDS.
     std::string porque;
     Shop::Item pedido = *item;
     pedido.quantidade = item->quantidade * quantas;
@@ -447,7 +447,7 @@ static void ComandoComprar(const Jogador& j, const std::string& chave, int quant
 static bool EhAdmin(const Jogador& j)
 {
     const ConanPermApi* perm = ConanPermObter();
-    if (!perm || !perm->tem) return false;    // sem Permission, ninguem e' admin
+    if (!perm || !perm->tem) return false;    // no Permission, nobody is admin
     if (g_cfg.permAdmin.empty()) return false;
     return perm->tem(j.id.c_str(), g_cfg.permAdmin.c_str()) == 1;
 }
@@ -461,7 +461,7 @@ static void ComandoDar(const Jogador& j, const std::string& resto)
     }
 
     // "<name> <amount>" — can the name contain a space? No: a Conan name is
-    // "Indio#76973", with none. Splitting on the LAST space covers both cases
+    // "Player#12345", with none. Splitting on the LAST space covers both cases
     // without needing quotes.
     const size_t esp = resto.rfind(' ');
     if (esp == std::string::npos || esp + 1 >= resto.size())
@@ -601,8 +601,8 @@ extern "C" ConanAcao AoFalar(ConanChamada* c)
         return CONAN_CONTINUAR;
     }
 
-    // A ordem importa: o mais especifico primeiro, senao "!shopreload" seria
-    // engolido por "!shop".
+    // Order matters: the most specific first, or "!shopreload" would be
+    // swallowed by "!shop".
     if (Shop::Prefixo(msg, g_cfg.cmdRecarregar, resto)) { ComandoRecarregar(j); return CONAN_CANCELAR; }
     if (Shop::Prefixo(msg, g_cfg.cmdDar, resto))        { ComandoDar(j, resto);  return CONAN_CANCELAR; }
     if (Shop::Prefixo(msg, g_cfg.cmdComprar, resto))

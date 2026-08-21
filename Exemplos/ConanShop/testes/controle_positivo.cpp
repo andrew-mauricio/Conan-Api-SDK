@@ -69,7 +69,7 @@ namespace
             sqlite3_finalize(st);
         }
 
-        if (saldo < quanto) return false;      // <- a checagem, FORA do UPDATE
+        if (saldo < quanto) return false;      // <- the check, OUTSIDE the UPDATE
 
         // The pause isn't a trick to force the defect: it stands for what any
         // shop does between deciding and charging — building the message,

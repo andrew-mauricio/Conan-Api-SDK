@@ -198,10 +198,11 @@ bool LerConfig(const char* caminho, Config& destino, std::string& erro)
         return false;
     }
 
-    // Monta numa copia. So' vira a configuracao viva se chegar inteira ao fim.
+    // Built into a copy. It only becomes the live configuration if it reaches
+    // the end whole.
     Config c;
 
-    // ── banco ───────────────────────────────────────────────────────────────
+    // ── the database ────────────────────────────────────────────────────────
     {
         bool achou = false;
         std::string tipo = j.Texto(texto, "$.banco.tipo", &achou);
@@ -299,7 +300,7 @@ bool LerConfig(const char* caminho, Config& destino, std::string& erro)
     if (c.permAdmin.empty()) c.permAdmin = "shop.admin";
     c.permComprar = j.Texto(texto, "$.permissoes.comprar");
 
-    // ── mensagens ───────────────────────────────────────────────────────────
+    // ── the messages ────────────────────────────────────────────────────────
     {
         struct Ctx { Config* c; } ctx{ &c };
         std::string e;

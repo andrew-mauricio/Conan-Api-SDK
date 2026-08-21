@@ -75,10 +75,10 @@ A web panel, a script, a scheduled task, SSH. Write lines into:
 ```
 
 ```
-dar     Indio#76973 500 premio do evento
-tirar   A-4QR7CRS0F 100 estorno
-definir Indio#76973 0
-saldo   Indio#76973
+dar     Player#12345 500 premio do evento
+tirar   A-EXAMPLE12 100 estorno
+definir Player#12345 0
+saldo   Player#12345
 recarregar
 ```
 
@@ -87,7 +87,7 @@ The plugin picks them up within 3 seconds and answers, line by line, in
 
 ```
 # ConanShop — respostas de 2026-08-20 04:15:02
-linha 1: ok dar A-4QR7CRS0F +500 (saldo 1250)
+linha 1: ok dar A-EXAMPLE12 +500 (saldo 1250)
 linha 2: RECUSADO tirar A-9XX -100 — saldo insuficiente (tem 40). NADA foi tirado.
 ```
 
@@ -404,6 +404,16 @@ showed up when somebody typed `!pontos` inside the game.
 
 ## Licence
 
-Same as Conan-Api's. You can run it on as many servers as you like, including
-servers that charge their players; and you can write and **sell** plugins of your
-own on top of the API. What you can't do is resell or re-host the API itself.
+Three different licences meet here, and it's worth being precise about which is
+which:
+
+| | licence | what it means |
+|---|---|---|
+| **Conan Shop** (this plugin) | **MIT** | copy it, change it, redistribute it, sublicense it, sell it. See the LICENSE file |
+| **Conan-Api-SDK** (the headers and examples) | **MIT** | same |
+| **Conan-Api runtime** (the loader and the .dll it ships) | its own, more restrictive licence | run it on as many servers as you like, including servers that charge their players, and write and **sell** plugins on top of it. What you can't do is resell or re-host the runtime itself |
+
+So: this shop is MIT, and nothing here restricts what you do with it. The
+restriction that exists belongs to the runtime underneath, and it doesn't reach
+the plugins written against it — that split is deliberate, and the runtime's
+LICENSE spells it out.

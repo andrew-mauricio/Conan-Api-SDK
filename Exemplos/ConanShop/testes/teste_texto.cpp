@@ -52,8 +52,8 @@ int main()
              "comando no MEIO da frase nao casa");
 
     std::printf("\n== 3. a ORDEM do roteador, como o plugin faz ==\n");
-    // O plugin testa: recarregar, dar, comprar, pontos, ajuda, loja.
-    // Se a ordem estivesse errada, "!shopreload" cairia em "!shop".
+    // The plugin tests in this order: recarregar, dar, comprar, pontos, ajuda,
+    // loja. If the order were wrong, "!shopreload" would fall into "!shop".
     auto rotear = [](const std::string& msg) -> std::string
     {
         std::string resto;
@@ -75,7 +75,7 @@ int main()
         { "!comprar pedra",         "comprar"    },
         { "!comprar pedra 3",       "comprar"    },
         { "!pontos",                "pontos"     },
-        { "!shoploja",              "(nenhum)"   },   // parecido, mas nao e' nenhum
+        { "!shoploja",              "(nenhum)"   },   // looks like one, matches none
         { "!banir alguem",          "(nenhum)"   },
         { "oi pessoal",             "(nenhum)"   },
     };

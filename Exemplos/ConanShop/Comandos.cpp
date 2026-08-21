@@ -15,7 +15,7 @@
 
 namespace Shop
 {
-// Vem do ConanShop.cpp: a tabela da API e a configuracao viva. Declarados aqui
+// From ConanShop.cpp: the API table and the live configuration. Declared here
 // rather than passed as parameters, because this module is called by the
 // scheduler, which carries no context.
 extern const ConanApiTabela* ApiDaLoja();
@@ -34,7 +34,7 @@ namespace
     // group's validation happens later, in there.
     //
     // The first version treated that 1 as success and answered
-    // "ok grupo A-4QR7CRS0F -> naoexiste" for a group that DOESN'T EXIST.
+    // "ok grupo A-EXAMPLE12 -> naoexiste" for a group that DOESN'T EXIST.
     // Permission did everything right (it refused and logged "conceder
     // ignorado: grupo 'naoexiste' nao existe"). It was MY answer that lied.
     //
@@ -81,7 +81,7 @@ namespace
     bool Resolver(const std::string& quem, std::string& id, std::string& porque)
     {
         // A Conan account id starts with "A-" and has no "#". A display name
-        // has one (Indio#76973). Trying the id first avoids walking the world
+        // has one (Player#12345). Trying the id first avoids walking the world
         // for nothing.
         if (quem.find('#') == std::string::npos)
         {
@@ -432,7 +432,7 @@ void AtenderFila()
 
     if (respostas.empty()) return;
 
-    // ── as respostas ────────────────────────────────────────────────────────
+    // ── the answers ─────────────────────────────────────────────────────────
     //
     // Overwrites rather than accumulating: the file answers the LAST batch, and
     // whoever automates it reads that and knows it's the answer to what they
