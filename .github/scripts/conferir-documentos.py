@@ -31,18 +31,15 @@ import sys
 # had nothing to do with the documents being broken.
 #
 # A guard that cries wolf gets ignored, and then it protects nothing.
+# REQUIRED: the English documents and the page's assets. English is the primary
+# language and the one that is kept — if one of these goes, readers lose the
+# document, not a convenience.
 PROTEGIDOS = [
     "README.md",                          # English, the front page
-    "Docs/README.pt.md",
-    "Docs/README.es.md",
     "Docs/DEVELOPERS.md",                 # the dev guide, English
-    "Docs/PARA-DESENVOLVEDORES.pt.md",
     "Docs/EVENTS.md",                     # the event map, English
-    "Docs/EVENTOS.pt.md",
     "README.txt",                         # SDK cover, English
-    "LEIA-ME.txt",
     "PUBLISHING-A-PLUGIN.md",
-    "PUBLICAR-PLUGIN.pt.md",
     "LICENSE",
     ".gitignore",
     ".github/imagens/conan-header.jpg",
@@ -50,6 +47,18 @@ PROTEGIDOS = [
     ".github/imagens/bandeiras/br.png",
     ".github/imagens/bandeiras/us.png",
     ".github/imagens/bandeiras/es.png",
+]
+
+# OPTIONAL: the translations. Welcome, and worth keeping current, but their
+# absence is a note and not a defect — see check 2 for the asymmetry and why it
+# is not symmetric.
+OPCIONAIS = [
+    "Docs/README.pt.md",
+    "Docs/README.es.md",
+    "Docs/PARA-DESENVOLVEDORES.pt.md",
+    "Docs/EVENTOS.pt.md",
+    "LEIA-ME.txt",
+    "PUBLICAR-PLUGIN.pt.md",
 ]
 
 # Every English document must have its Portuguese counterpart, and vice versa.
@@ -115,24 +124,54 @@ def main():
             erro("%s WAS DELETED" % rel)
             sumidos.append(rel)
 
+    for rel in OPCIONAIS:
+        if os.path.isfile(os.path.join(raiz, rel)):
+            ok("%s (translation)" % rel)
+        else:
+            aviso("%s is not here (an optional translation)" % rel)
+
     if sumidos:
         print("")
         print("  To bring them back, from the last commit that still had them:")
         print("      git log --oneline --diff-filter=D -- %s" % sumidos[0])
         print("      git checkout <previous-commit> -- %s" % " ".join(sumidos))
 
-    print("== 2. English and Portuguese come in pairs ==")
+    print("== 2. English is primary; Portuguese is an optional translation ==")
+    #
+    # THE RULE THIS ENCODES, and it is not symmetric.
+    #
+    # English is the language that is kept: every public document has an English
+    # version and that is the one that stays current. Portuguese may sit beside
+    # it as a translation, and it is welcome, but it is OPTIONAL — a missing or
+    # lagging translation is not a broken repository.
+    #
+    # So the two directions are NOT the same failure:
+    #
+    #   English present, translation missing  -> a note. Nothing is broken; the
+    #                                            document everyone can read is
+    #                                            there.
+    #   Translation present, English missing  -> a HARD failure. An orphaned
+    #                                            .pt file means the PRIMARY
+    #                                            document was lost, and the only
+    #                                            thing left is the one most
+    #                                            readers cannot use. That is the
+    #                                            exact state this project spent
+    #                                            an audit climbing out of.
+    #
+    # This check used to fail both ways, and it was wrong for the first: it
+    # would paint the repository red over a file that was never required.
     for en, pt in PARES:
         tem_en = os.path.isfile(os.path.join(raiz, en))
         tem_pt = os.path.isfile(os.path.join(raiz, pt))
         if tem_en and tem_pt:
             ok("%s <-> %s" % (en, pt))
         elif tem_en:
-            erro("%s exists but its translation %s does not" % (en, pt))
+            aviso("%s has no %s translation (optional)" % (en, pt))
         elif tem_pt:
-            erro("%s exists but the English original %s does not" % (pt, en))
+            erro("%s is an ORPHANED translation: the English original %s is gone"
+                 % (pt, en))
         else:
-            erro("both %s and %s are missing" % (en, pt))
+            erro("%s is missing (the English original, which is required)" % en)
 
     print("== 3. Every local path cited in the documents points at a real file ==")
     for rel in IDIOMAS:
