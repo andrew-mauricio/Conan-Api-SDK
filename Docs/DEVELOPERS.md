@@ -175,7 +175,7 @@ silently starts reading the wrong memory.
   "FullName": "My Plugin",
   "Version": "1.0.0",
   "MinApiVersion": 6,
-  "BuildDoJogo": 24784646,
+  "BuildDoJogo": 24922388,
   "UsaOffsetsCrus": true
 }
 ```
@@ -204,11 +204,11 @@ the number. It resolves through reflection, on whichever build is running.
 They are different things, and both appear in every release:
 
 ```
-Conan-Api 2.7.0 — build 24784646
+Conan-Api 2.7.0 — build 24922388
 ```
 
 - **`2.7.0`** — the project's version
-- **`build 24784646`** — the **Conan Exiles** build this API is for
+- **`build 24922388`** — the **Conan Exiles** build this API is for
 
 The API locates engine structures in that build's memory layout. When Funcom
 updates, those move, and the API **refuses to load**, deliberately, saying so in
@@ -622,7 +622,7 @@ Besides the table, the package ships **`ConanSDK.h`**: **9,247 Conan classes**
 with the members and functions the game's reflection declares. It is not a list
 of names: **~89% of the 38,340 functions have a complete signature** — type and
 name of every parameter, checked against the running server with the world
-loaded, on build `24784646`.
+loaded, on build `24922388`.
 
 ```cpp
 #include "Conan/ConanSDK.h"

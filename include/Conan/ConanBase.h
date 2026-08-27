@@ -1642,7 +1642,7 @@ namespace ConanApi
 //
 // At 3am, that line is what someone uses to know which build the API was made
 // for. Saying the wrong number sends them to investigate the wrong place.
-#define CONAN_BUILD_DO_JOGO "24784646"
+#define CONAN_BUILD_DO_JOGO "24922388"
 }
 
 // ── minimal engine types, only what the accessors need ─────────────────────

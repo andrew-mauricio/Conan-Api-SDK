@@ -2,7 +2,7 @@ Conan-Api SDK 2.7.0 — writing plugins for Conan Exiles
 =========================================================
 
 API table: v6
-Targets game build 24784646 (UE 5.6.1 (++exiles+release))
+Targets game build 24922388 (UE 5.6.1 (++exiles+release))
 
 (Este documento em portugues: LEIA-ME.txt)
 

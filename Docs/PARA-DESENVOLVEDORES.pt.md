@@ -162,7 +162,7 @@ passa a ler memória errada em silêncio.
   "FullName": "Meu Plugin",
   "Version": "1.0.0",
   "MinApiVersion": 6,
-  "BuildDoJogo": 24784646,
+  "BuildDoJogo": 24922388,
   "UsaOffsetsCrus": true
 }
 ```
@@ -191,11 +191,11 @@ do número. Ele resolve pela reflexão, na build que estiver rodando.
 São coisas diferentes, e as duas aparecem em toda release:
 
 ```
-Conan-Api 2.7.0 — build 24784646
+Conan-Api 2.7.0 — build 24922388
 ```
 
 - **`2.7.0`** — a versão do projeto
-- **`build 24784646`** — a versão do **Conan Exiles** para a qual esta API serve
+- **`build 24922388`** — a versão do **Conan Exiles** para a qual esta API serve
 
 A API conhece o jogo por endereços de memória daquela build. Quando a Funcom
 atualizar, esses endereços mudam de lugar e a API **se recusa a carregar**, de
