@@ -215,7 +215,7 @@ itemtable-conan.json     for a program
 itemtable-conan.csv      for a spreadsheet (with a BOM, so Excel gets the accents right on its own)
 ```
 
-On this build (24784646) that's **9,121 items × 120 columns**, with `Name`,
+Measured on build 24784646, that's **9,121 items × 120 columns**, with `Name`,
 `GUICategory`, `ItemClass`, `ItemTier`, `DLCPackage`, `MaxStackSize` and the
 rest.
 
