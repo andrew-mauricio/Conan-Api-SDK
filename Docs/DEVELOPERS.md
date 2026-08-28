@@ -136,7 +136,7 @@ the Microsoft runtime may not be installed.
 The header carries a number:
 
 ```c
-#define CONAN_API_VERSAO 7
+#define CONAN_API_VERSAO 8
 ```
 
 It increments when **new functions are added** — and they always go at the **end**
@@ -204,7 +204,7 @@ the number. It resolves through reflection, on whichever build is running.
 They are different things, and both appear in every release:
 
 ```
-Conan-Api 2.9.0 — build 24922388
+Conan-Api 2.10.0 — build 24922388
 ```
 
 - **`2.7.0`** — the project's version
@@ -775,9 +775,46 @@ worse than one that says no.
 > face. Verify the index against something you already know before trusting what
 > comes back.
 
+### Reading a set the engine keeps private — `LerConjunto` (v8)
+
+The other half of the same problem. Reflection publishes `TArray` and it
+publishes plain fields, but a `TSet` or `TMap` member is just sixteen opaque
+bytes to it: a data pointer and a count, with the elements somewhere else. The
+membership tests that decide what a player owns live in exactly those.
+
+Walking that header by hand is how plugins die, because the count is an `int32`
+read out of a live object — a stale one gives you a multiplication that wraps,
+and a copy that never stops:
+
+```c
+typedef struct { int32_t nomeIdx, nomeNum; uint8_t pad[8]; } Elem;  /* 16 bytes */
+
+Elem elems[64];
+int quantos = 0;
+if (api->LerConjunto((char*)controller + off, sizeof(Elem),
+                     elems, 64, &quantos))
+    for (int i = 0; i < quantos; ++i)
+        api->NomeDeFName(elems[i].nomeIdx, buf, sizeof buf);
+```
+
+It refuses a null base, an element size that is neither 16 (`TSet`) nor 32
+(`TMap`), a header that is not readable, a count that is negative or above four
+million, and a span of elements that is not mapped. It copies at most
+`maxElementos` and writes how many it actually wrote.
+
+> **Empty is not the same as refused.** A genuinely empty set returns success
+> with a count of zero. A refusal returns zero and writes nothing. The project's
+> own rule applies here more than anywhere: *a zero result is a hypothesis, not
+> a conclusion* — check the return value, not just the count.
+
+It does not prove the memory is a set. It proves that IF it is one with that
+element size, reading it will not fault. The layout comes from measurement — the
+worked example above reads the two entries this account really owns and prints
+their names back, which is what a positive control looks like.
+
 Keep declaring `MinApiVersion` as the oldest table you genuinely need: test
-`api->ChamarVirtual` for null and degrade, rather than refusing to load on
-servers that have not updated yet.
+`api->ChamarVirtual` and `api->LerConjunto` for null and degrade, rather than
+refusing to load on servers that have not updated yet.
 
 ---
 
@@ -1115,3 +1152,4 @@ ABI and renaming them would break every plugin already compiled. Their meaning:
 | `NumObjects` / `GetObjectByIndex` / `FindObject` / `FindObjects` | object lookup |
 | `GetDefaultObject` / `DescendeDe` / `NomeDoObjeto` | class helpers |
 | `ChamarVirtual` / `Executavel` | a native virtual by index, and "is this code?" (v7) |
+| `LerConjunto` | copies the elements of a `TSet`/`TMap` the engine keeps private (v8) |

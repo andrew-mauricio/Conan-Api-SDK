@@ -124,7 +124,7 @@ da Microsoft pode não estar instalado.
 O header traz um número:
 
 ```c
-#define CONAN_API_VERSAO 7
+#define CONAN_API_VERSAO 8
 ```
 
 Ele sobe quando **funções novas são acrescentadas** — e elas entram sempre no
@@ -191,10 +191,10 @@ do número. Ele resolve pela reflexão, na build que estiver rodando.
 São coisas diferentes, e as duas aparecem em toda release:
 
 ```
-Conan-Api 2.9.0 — build 24922388
+Conan-Api 2.10.0 — build 24922388
 ```
 
-- **`2.9.0`** — a versão do projeto
+- **`2.10.0`** — a versão do projeto
 - **`build 24922388`** — a versão do **Conan Exiles** para a qual esta API serve
 
 A API conhece o jogo por endereços de memória daquela build. Quando a Funcom
@@ -724,9 +724,46 @@ diz não.
 > índice errado chama a função errada com toda a cara de certo. Confira o índice
 > contra algo que você já conhece antes de confiar no que voltar.
 
+### Ler um conjunto que o motor guarda para si — `LerConjunto` (v8)
+
+A outra metade do mesmo problema. A reflexão publica `TArray` e publica campo
+simples, mas um membro `TSet` ou `TMap` é dezesseis bytes opacos para ela: um
+ponteiro de dados e uma contagem, com os elementos noutro lugar. Os testes de
+pertencimento que decidem o que um jogador possui moram exatamente nesses.
+
+Andar nesse cabeçalho na mão é como plugin morre, porque a contagem é um `int32`
+lido de um objeto vivo — um valor velho dá uma multiplicação que dá a volta, e
+uma cópia que não para nunca:
+
+```c
+typedef struct { int32_t nomeIdx, nomeNum; uint8_t pad[8]; } Elem;  /* 16 bytes */
+
+Elem elems[64];
+int quantos = 0;
+if (api->LerConjunto((char*)controller + off, sizeof(Elem),
+                     elems, 64, &quantos))
+    for (int i = 0; i < quantos; ++i)
+        api->NomeDeFName(elems[i].nomeIdx, buf, sizeof buf);
+```
+
+Ela recusa base nula, tamanho de elemento que não seja 16 (`TSet`) nem 32
+(`TMap`), cabeçalho ilegível, contagem negativa ou acima de quatro milhões, e um
+trecho de elementos que não esteja mapeado. Copia no máximo `maxElementos` e
+escreve quantos de fato copiou.
+
+> **Vazio não é o mesmo que recusado.** Um conjunto genuinamente vazio devolve
+> sucesso com contagem zero. Uma recusa devolve zero e não escreve nada. A regra
+> da casa vale aqui mais do que em qualquer lugar: *resultado zero é hipótese,
+> não conclusão* — olhe o retorno, não só a contagem.
+
+Ela não prova que a memória é um conjunto. Prova que SE for um, com aquele
+tamanho de elemento, a leitura não vai faltar página. O layout vem de medição —
+o exemplo acima lê os dois pacotes que esta conta realmente possui e imprime os
+nomes de volta, que é a cara de um controle positivo.
+
 E continue declarando `MinApiVersion` como a tabela mais antiga de que você
-realmente precisa: teste `api->ChamarVirtual` contra nulo e degrade, em vez de
-recusar carregar em servidor que ainda não atualizou.
+realmente precisa: teste `api->ChamarVirtual` e `api->LerConjunto` contra nulo e
+degrade, em vez de recusar carregar em servidor que ainda não atualizou.
 
 ---
 
@@ -898,3 +935,4 @@ publicada, e renomeá-los quebraria todo plugin já compilado. O que cada um faz
 | `NumObjects` / `GetObjectByIndex` / `FindObject` / `FindObjects` | busca de objeto |
 | `GetDefaultObject` / `DescendeDe` / `NomeDoObjeto` | auxiliares de classe |
 | `ChamarVirtual` / `Executavel` | virtual nativa por índice, e "isto é código?" (v7) |
+| `LerConjunto` | copia os elementos de um `TSet`/`TMap` que o motor guarda para si (v8) |

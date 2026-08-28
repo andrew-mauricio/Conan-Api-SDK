@@ -96,7 +96,7 @@ extern "C" {
 
 // The version increments when fields are APPENDED. Never when something moves
 // — that does not happen.
-#define CONAN_API_VERSAO 7
+#define CONAN_API_VERSAO 8
 
 // ── what a hook receives ────────────────────────────────────────────────────
 //
@@ -594,6 +594,48 @@ typedef struct ConanApiTabela
     // disassembly — and calling the wrong index calls the wrong function with a
     // perfectly straight face.
     int (*ChamarVirtual)(void* obj, uint32_t indice, void* saida, void** retorno);
+
+    // ── v8: READING AN ENGINE SET/MAP THAT REFLECTION DOES NOT PUBLISH ──────
+    //
+    // v8 AND NOT v7, and the reason is the invariant itself: v7 shipped with
+    // `ChamarVirtual` and nothing else. Adding a field while keeping the number
+    // would mean two different tables both calling themselves v7 — and a plugin
+    // built against the larger one would read a pointer past the end of the
+    // struct on a server that has the smaller. The number is the promise.
+    //
+    // Some of what the game keeps lives in a `TSet`/`TMap` that no UPROPERTY
+    // points at — a global lookup table, a field the engine holds natively. The
+    // layout is not a secret (it was measured off a live specimen here), but a
+    // plugin walking it by hand gets the sparse array, the free list and the
+    // hash wrong in ways that read plausible garbage rather than crashing.
+    //
+    // So the walk happens once, here:
+    //
+    //     +0x00  Data        pointer to the elements
+    //     +0x08  ArrayNum    how many slots exist
+    //     +0x34  NumFree     free ones among them
+    //     +0x38  Hash inline
+    //     +0x40  HashPtr     when non-null, replaces the inline hash
+    //     +0x48  HashSize
+    //
+    // `base` points at those 80 bytes — usually `objeto + offset`, but it may be
+    // any readable address, which is what makes a global table reachable.
+    // `tamElemento` is 16 for a TSet, 32 for a TMap in this engine; passing the
+    // wrong one is the mistake this call cannot catch for you, so it is checked
+    // against `ArrayNum` before anything is copied.
+    //
+    // Copies raw element bytes into `saida`, up to `maxElementos`, and writes
+    // how many it got into `*fora`. It DOES NOT decode FString values inside
+    // them: those hold pointers into the game's memory, and the caller has to
+    // read them inside the window where they are valid — the same rule as
+    // CONAN_SAIDA_TEXTO.
+    //
+    // Returns 1 when it read; 0 when it refused, and it refuses on: unreadable
+    // base, `Data` unreadable for the size implied by ArrayNum, ArrayNum
+    // negative or absurd, or element size that does not match. A refusal writes
+    // 0 to `*fora` — an empty answer and a refused answer must not look alike.
+    int (*LerConjunto)(const void* base, uint32_t tamElemento,
+                       void* saida, int maxElementos, int* fora);
 
     // New fields go HERE, at the end, and `versao` increments. Never in the
     // middle.
