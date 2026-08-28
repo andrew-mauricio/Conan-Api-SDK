@@ -136,7 +136,7 @@ the Microsoft runtime may not be installed.
 The header carries a number:
 
 ```c
-#define CONAN_API_VERSAO 6
+#define CONAN_API_VERSAO 7
 ```
 
 It increments when **new functions are added** — and they always go at the **end**
@@ -204,7 +204,7 @@ the number. It resolves through reflection, on whichever build is running.
 They are different things, and both appear in every release:
 
 ```
-Conan-Api 2.7.0 — build 24922388
+Conan-Api 2.9.0 — build 24922388
 ```
 
 - **`2.7.0`** — the project's version
@@ -736,6 +736,51 @@ is not a result.
 
 ---
 
+## Reaching a native virtual — and the check that costs servers
+
+Reflection publishes **UFunctions**. It does not publish **native virtuals**, and
+some of what you need lives only there: the getter that hands back the DataTable
+row behind an item, for one.
+
+The obvious improvisation is to read the vtable yourself and jump. **Do not.**
+On 27 Aug 2026 a plugin here did exactly that — every read guarded by `Legivel`
+— and still killed a live server with a player connected. `Legivel` proves a
+page is **mapped**; it says nothing about whether a value is a pointer. Two
+`INDEX_NONE` (`-1`) side by side, read as one `uint64`, are
+`0xFFFFFFFFFFFFFFFF` — the most ordinary garbage there is inside an object.
+
+Since **v7** the API does that one dangerous thing for you, once, with the checks:
+
+```c
+void* linha = NULL;
+if (api->ChamarVirtual(item, 0x500 / 8, NULL, &linha) && linha)
+    api->LerMembro(linha, 0xE0, &pacote, 8);
+```
+
+Five layers before it jumps: the object readable and above the null page; the
+vtable pointer read through the guarded path; **the whole span** up to your slot
+readable, so a short vtable is refused instead of walked off the end of; the
+index capped; and — the one that was missing that day — **the slot must point at
+executable memory**. `Executavel()` is published too, if you need to ask it
+directly.
+
+Two shapes only: `R f(this)` and `R f(this, out*)`. Floats, by-value structs and
+extra parameters are refused, because getting the x64 ABI subtly wrong corrupts
+the game thread's stack — and a primitive that is right most of the time is
+worse than one that says no.
+
+> **It cannot tell you *which* function the slot holds.** The checks prove it is
+> *a* function, reachable and executable. Which one comes from disassembly, and
+> calling the wrong index calls the wrong function with a perfectly straight
+> face. Verify the index against something you already know before trusting what
+> comes back.
+
+Keep declaring `MinApiVersion` as the oldest table you genuinely need: test
+`api->ChamarVirtual` for null and degrade, rather than refusing to load on
+servers that have not updated yet.
+
+---
+
 ## Granting knowledge: feats and recipes
 
 A worked example, because `ConanSDK.h` holds 9,247 classes and knowing that a
@@ -1069,3 +1114,4 @@ ABI and renaming them would break every plugin already compiled. Their meaning:
 | `UltimaChamadaExecutou` | did the last call actually execute |
 | `NumObjects` / `GetObjectByIndex` / `FindObject` / `FindObjects` | object lookup |
 | `GetDefaultObject` / `DescendeDe` / `NomeDoObjeto` | class helpers |
+| `ChamarVirtual` / `Executavel` | a native virtual by index, and "is this code?" (v7) |

@@ -1,7 +1,7 @@
-Conan-Api SDK 2.8.0 — writing plugins for Conan Exiles
+Conan-Api SDK 2.9.0 — writing plugins for Conan Exiles
 =========================================================
 
-API table: v6
+API table: v7
 Targets game build 24922388 (UE 5.6.1 (++exiles+release))
 
 (Este documento em portugues: LEIA-ME.txt)
@@ -57,7 +57,7 @@ VERSIONS: WHAT HAS TO MATCH
 
   In your PluginInfo.json, declare which table version you need:
 
-      { "FullName":"My Plugin", "Version":"1.0.0", "MinApiVersion":6 }
+      { "FullName":"My Plugin", "Version":"1.0.0", "MinApiVersion":7 }
 
   If the server has an older API than that, the loader REFUSES your plugin and
   says which version is missing, instead of letting it run against a struct

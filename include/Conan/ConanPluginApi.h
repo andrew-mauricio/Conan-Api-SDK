@@ -96,7 +96,7 @@ extern "C" {
 
 // The version increments when fields are APPENDED. Never when something moves
 // — that does not happen.
-#define CONAN_API_VERSAO 6
+#define CONAN_API_VERSAO 7
 
 // ── what a hook receives ────────────────────────────────────────────────────
 //
@@ -545,6 +545,55 @@ typedef struct ConanApiTabela
                           const void** args, const uint32_t* tams, int nargs,
                           const ConanSaida* saidas, int nsaidas,
                           void* retorno, uint32_t tamRetorno);
+
+    // ── v7: CALLING A NATIVE VIRTUAL BY INDEX, WITH THE CHECKS ──────────────
+    //
+    // WHY THIS EXISTS. Reflection publishes UFunctions. It does NOT publish
+    // native virtuals, and some of what a plugin needs lives only there — the
+    // getter that hands back the DataTable row behind an item, the list of
+    // reward ids behind a feat. Until now the only way at those was for the
+    // plugin to read the vtable and jump on its own, which is exactly how this
+    // project killed a live server on 27/08/2026.
+    //
+    // So the dangerous thing plugins would improvise anyway is done ONCE, here,
+    // with every check that makes it defensible:
+    //
+    //   1. `obj` readable, and not the reserved null page;
+    //   2. the vtable pointer read through the guarded path, never raw;
+    //   3. the whole span up to the requested slot readable — a vtable shorter
+    //      than the index is refused, not walked off the end of;
+    //   4. `indice` capped, so a plausible-looking huge index cannot become a
+    //      wild read;
+    //   5. AND THE SLOT MUST POINT AT EXECUTABLE MEMORY. This is what separates
+    //      a function pointer from a number that happens to sit in a mapped
+    //      page — the distinction whose absence cost the server.
+    //
+    // Any failure returns 0 and calls NOTHING.
+    //
+    // THE SHAPES SUPPORTED, and why only these. Two forms cover the native
+    // getters worth reaching, and both are unambiguous in the x64 ABI:
+    //
+    //     R  f(this)              -> pass saida = NULL
+    //     R  f(this, void* out)   -> pass saida = &your_buffer
+    //
+    // Anything with floats, by-value structs or more parameters is refused on
+    // purpose: getting the ABI subtly wrong corrupts the game thread's stack,
+    // and a primitive that is right most of the time is worse than one that
+    // says no.
+    //
+    // `retorno` receives RAX. For a getter that answers a pointer that IS the
+    // answer; for one that fills `saida`, look there.
+    //
+    //     void* linha = NULL;
+    //     if (api->ChamarVirtual(featItem, 0x500/8, NULL, &linha) && linha)
+    //         api->LerMembro(linha, 0xE0, &pacote, 8);
+    //
+    // WHAT IT STILL CANNOT PROVE, written here rather than implied: that the
+    // slot you asked for is the function you think it is. The checks prove it
+    // is *a* function, reachable and executable. WHICH one comes from
+    // disassembly — and calling the wrong index calls the wrong function with a
+    // perfectly straight face.
+    int (*ChamarVirtual)(void* obj, uint32_t indice, void* saida, void** retorno);
 
     // New fields go HERE, at the end, and `versao` increments. Never in the
     // middle.

@@ -124,7 +124,7 @@ da Microsoft pode não estar instalado.
 O header traz um número:
 
 ```c
-#define CONAN_API_VERSAO 6
+#define CONAN_API_VERSAO 7
 ```
 
 Ele sobe quando **funções novas são acrescentadas** — e elas entram sempre no
@@ -191,10 +191,10 @@ do número. Ele resolve pela reflexão, na build que estiver rodando.
 São coisas diferentes, e as duas aparecem em toda release:
 
 ```
-Conan-Api 2.7.0 — build 24922388
+Conan-Api 2.9.0 — build 24922388
 ```
 
-- **`2.7.0`** — a versão do projeto
+- **`2.9.0`** — a versão do projeto
 - **`build 24922388`** — a versão do **Conan Exiles** para a qual esta API serve
 
 A API conhece o jogo por endereços de memória daquela build. Quando a Funcom
@@ -686,6 +686,50 @@ vezes. Preferimos template sem tipo a assinatura que corrompe.
 
 ---
 
+## Alcançar uma virtual nativa — e a checagem que custa servidor
+
+A reflexão publica **UFunction**. Ela não publica **virtual nativa**, e parte do
+que você precisa só existe lá: o getter que devolve a linha da DataTable por
+trás de um item, por exemplo.
+
+A improvisação óbvia é ler a vtable na mão e saltar. **Não faça.** Em
+27/08/2026 um plugin daqui fez exatamente isso — com toda leitura protegida por
+`Legivel` — e matou um servidor no ar, com jogador dentro. `Legivel` prova que a
+página está **mapeada**; não diz nada sobre o valor ser um ponteiro. Dois
+`INDEX_NONE` (`-1`) vizinhos, lidos como um `uint64`, dão `0xFFFFFFFFFFFFFFFF`
+— o lixo mais comum que existe dentro de um objeto.
+
+Desde a **v7** a API faz essa coisa perigosa por você, uma vez, com as checagens:
+
+```c
+void* linha = NULL;
+if (api->ChamarVirtual(item, 0x500 / 8, NULL, &linha) && linha)
+    api->LerMembro(linha, 0xE0, &pacote, 8);
+```
+
+Cinco camadas antes de saltar: objeto legível e acima da página nula; ponteiro
+da vtable lido pelo caminho guardado; **a faixa inteira** até o seu slot
+legível, para que uma vtable curta seja recusada em vez de percorrida para fora;
+índice com teto; e — a que faltava naquele dia — **o slot tem de apontar para
+memória executável**. `Executavel()` também está publicado, se precisar
+perguntar direto.
+
+Só duas formas: `R f(this)` e `R f(this, out*)`. Float, struct por valor e mais
+parâmetros são recusados, porque errar a ABI x64 sutilmente corrompe a pilha da
+thread do jogo — e primitiva que acerta quase sempre é pior que primitiva que
+diz não.
+
+> **Ela não sabe dizer QUAL função está no slot.** As checagens provam que é
+> *uma* função, alcançável e executável. Qual delas vem do desmonte, e chamar o
+> índice errado chama a função errada com toda a cara de certo. Confira o índice
+> contra algo que você já conhece antes de confiar no que voltar.
+
+E continue declarando `MinApiVersion` como a tabela mais antiga de que você
+realmente precisa: teste `api->ChamarVirtual` contra nulo e degrade, em vez de
+recusar carregar em servidor que ainda não atualizou.
+
+---
+
 ## Falar com o jogador
 
 Isto existe desde a **v3** da tabela, e são três rotas diferentes:
@@ -853,3 +897,4 @@ publicada, e renomeá-los quebraria todo plugin já compilado. O que cada um faz
 | `UltimaChamadaExecutou` | a última chamada realmente executou? |
 | `NumObjects` / `GetObjectByIndex` / `FindObject` / `FindObjects` | busca de objeto |
 | `GetDefaultObject` / `DescendeDe` / `NomeDoObjeto` | auxiliares de classe |
+| `ChamarVirtual` / `Executavel` | virtual nativa por índice, e "isto é código?" (v7) |

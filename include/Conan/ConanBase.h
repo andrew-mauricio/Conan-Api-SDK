@@ -243,6 +243,17 @@ namespace ConanApi
     // memcpy.
     bool        Gravavel(void* p, size_t n);
 
+    // "Is this CODE?" — the third question, and the one whose absence cost a
+    // live server on 27/08/2026. A value pulled out of an object can sit in a
+    // mapped page and pass Legivel while being an integer, a float, or two
+    // INDEX_NONE side by side. Only the page protection separates a function
+    // pointer from a number that looks like one.
+    //
+    // The engine already used this internally to validate detour targets; it is
+    // published here because `ChamarVirtual` needs it, and because anything
+    // about to jump through a pointer should be asking it.
+    bool        Executavel(const void* p);
+
     // Talking to the player. Builds the FString with THE GAME's memory (the game
     // allocates, we overwrite), which is what prevents the crash when
     // ProcessEvent destroys the parameter block.
