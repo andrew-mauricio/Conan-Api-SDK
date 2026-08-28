@@ -53,9 +53,14 @@ if [ ! -f "$INC/Conan/ConanPermission.h" ]; then
     done
 fi
 
+# --no-insert-timestamp: without it the linker stamps the current time into the
+#   PE header, two builds of identical source produce different files, and
+#   "check the hash against the release" becomes theatre. The whole trust model
+#   of this project is a server owner being able to rebuild and compare.
 x86_64-w64-mingw32-g++ -std=c++17 -O2 -shared \
     -I "$INC" $PERM \
     -o "$AQUI/ExtratorItemTable.dll" \
     "$AQUI/ExtratorItemTable.cpp" \
-    -static-libgcc -static-libstdc++ -Wl,--enable-stdcall-fixup
+    -static-libgcc -static-libstdc++ -Wl,--enable-stdcall-fixup \
+    -Wl,--no-insert-timestamp
 echo "  ✅ $AQUI/ExtratorItemTable.dll"

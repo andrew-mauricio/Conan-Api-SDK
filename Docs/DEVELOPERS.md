@@ -818,6 +818,38 @@ refusing to load on servers that have not updated yet.
 
 ---
 
+
+### Do not verify with the thing you just wrote to
+
+The hardest bug in this file was not a crash. On 28 Aug 2026 this plugin
+reported `1098 of 1098 granted · 0 refused` and had unlocked **nothing**.
+
+It verified with `IsFeatPurchased`, which reads the same set the plugin had just
+written to. It asked the set whether it contained what had just been put into
+it. The test could not fail, and that is exactly why it was worthless.
+
+The game, meanwhile, was writing the truth into its own log — 3,991 times:
+
+```
+ItemInventory: Error: Data: Character does not own the Entitlement 1-269 for recipe 269
+```
+
+Two lessons worth stealing:
+
+**Read the target's log, not your own counters.** Anything you are driving from
+the outside usually says what it refused and why. That line named the key format
+(`"type-id"`, not the bare id) that no amount of staring at my own output would
+have revealed.
+
+**An instrument that shares state with the mutation measures nothing.** If your
+check reads the same structure your action writes, it is part of the action. Find
+a reading that comes from the other side of the boundary — and when there isn't
+one, say so in the log instead of letting a number stand in for a verdict.
+
+And a zero from that independent reading is still not proof: the game only
+refuses when someone tries to *use* the thing. Say that too.
+
+---
 ## Granting knowledge: feats and recipes
 
 A worked example, because `ConanSDK.h` holds 9,247 classes and knowing that a

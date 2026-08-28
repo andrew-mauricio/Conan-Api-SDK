@@ -767,6 +767,39 @@ degrade, em vez de recusar carregar em servidor que ainda não atualizou.
 
 ---
 
+
+### Não confira com aquilo em que você acabou de escrever
+
+O defeito mais difícil deste arquivo não foi uma queda. Em 28/08/2026 este
+plugin relatou `1098 of 1098 granted · 0 refused` e não tinha liberado **nada**.
+
+Ele conferia com `IsFeatPurchased`, que lê o mesmo conjunto em que o plugin
+acabara de escrever. Perguntou ao conjunto se ele continha o que tinha acabado
+de ser posto nele. O teste não podia falhar, e é exatamente por isso que não
+valia nada.
+
+O jogo, enquanto isso, escrevia a verdade no log dele — 3.991 vezes:
+
+```
+ItemInventory: Error: Data: Character does not own the Entitlement 1-269 for recipe 269
+```
+
+Duas lições que valem levar:
+
+**Leia o log do alvo, não os seus contadores.** Qualquer coisa que você comanda
+de fora costuma dizer o que recusou e por quê. Aquela linha entregou o formato
+da chave (`"tipo-id"`, e não o id nu) que nenhuma quantidade de tempo olhando a
+minha própria saída revelaria.
+
+**Instrumento que compartilha estado com a mutação não mede nada.** Se a sua
+conferência lê a mesma estrutura que a sua ação escreve, ela é parte da ação.
+Procure uma leitura que venha do outro lado da fronteira — e quando não houver,
+diga isso no log em vez de deixar um número ocupar o lugar do veredito.
+
+E zero nessa leitura independente ainda não é prova: o jogo só recusa quando
+alguém tenta *usar* a coisa. Diga isso também.
+
+---
 ## Falar com o jogador
 
 Isto existe desde a **v3** da tabela, e são três rotas diferentes:
